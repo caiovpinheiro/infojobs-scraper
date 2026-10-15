@@ -452,6 +452,23 @@ async function loadCrmTargets() {
   };
   return crmTargets;
 }
+function candidateNote(c, phone) {
+  const lines = [
+    ['Nome', c.nome],
+    ['Telefone', phone],
+    ['CEP', c.cep],
+    ['Endereço', c.endereco],
+    ['Nascimento', c.nascimento],
+    ['Idade', c.idade],
+    ['Curso', c.curso],
+    ['Local de ensino', c.localEnsino],
+    ['Vaga', c.vaga],
+    ['Tipo de contrato', c.tipo === 'ESTAGIO' ? 'Estágio' : 'CLT'],
+    ['Processo Pandapé', c.idVacancy],
+    ['Match', c.idMatch]
+  ];
+  return ['Candidato InfoJobs', '', ...lines.filter(([, value]) => value !== null && value !== undefined && value !== '').map(([label, value]) => `${label}: ${value}`)].join('\n');
+}
 function dealCustomFields(c, phone) {
   const tipo = c.tipo === 'ESTAGIO' ? 'Estágio' : 'CLT';
   const values = {
@@ -491,9 +508,8 @@ async function createInCrm(c) {
     });
     if (!deal?.id) throw new Error('CRM não retornou o ID do negócio.');
     result.dealId = deal.id;
-    const note = `Candidato via Pandapé / Infojobs — vaga: ${c.vaga} (${c.tipo === 'ESTAGIO' ? 'Estágio' : 'CLT'}, processo ${c.idVacancy}, match ${c.idMatch})${c.cep ? ` — CEP: ${c.cep}` : ''}.`;
     try {
-      await crm('POST', `/deals/${encodeURIComponent(deal.id)}/notes`, { content: note });
+      await crm('POST', `/deals/${encodeURIComponent(deal.id)}/notes`, { content: candidateNote(c, phone) });
       const tagId = targets.tags[c.tipo];
       if (!tagId) throw new Error('Tag do tipo de contrato não encontrada.');
       await crm('POST', `/deals/${encodeURIComponent(deal.id)}/tags`, { tagId });
