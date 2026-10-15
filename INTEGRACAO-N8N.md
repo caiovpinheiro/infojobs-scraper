@@ -24,6 +24,7 @@
 | Deduplicação / reengajamento | `2. CRM Dedup + Envio WhatsApp`; janela de 7 dias, teto 50 |
 | Mensagem WhatsApp | Função `sendWhatsApp` no nó 2; template Meta |
 | Criação de negócio, nota e tag | Apenas no caminho `/infojobs-teste`, nó `2c` |
+| Resumo / checagem de 2h | `3. Resumo Discord + Lote 2h` |
 | Categoria CLT/estágio | **Não existe** no código entregue. É preciso mapear cada vaga pelo ID ou obter um campo confiável do Pandapé. Não classificar apenas pelo título. |
 
 ## Arquitetura para o HTML
