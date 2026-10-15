@@ -72,6 +72,44 @@ function extractVacancies(html) {
   for (const match of String(html).matchAll(/\/Company\/Match\/Matches\/(\d+)\?idvacancyfolder=\d+/g)) ids.add(match[1]);
   return [...ids];
 }
+function contractTypeFromLabel(text) {
+  const value = decodeEntities(text).replace(/^#/, '').trim();
+  if (/^est[aá]gio$/i.test(value) || /\best[aá]gio\b/i.test(value)) return 'ESTAGIO';
+  if (/^clt$/i.test(value) || /\bclt\b|efetivo/i.test(value)) return 'CLT';
+  return null;
+}
+function extractContractType(html) {
+  const input = String(html);
+  const hidden = input.match(/id="hdn_IdContractWorkType"[^>]*value="(\d+)"|value="(\d+)"[^>]*id="hdn_IdContractWorkType"/i);
+  const code = hidden?.[1] || hidden?.[2] || '';
+  if (code === '4') return 'ESTAGIO';
+  if (code === '2') return 'CLT';
+  const start = input.indexOf('id="IdContractWorkType"');
+  if (start >= 0 && code) {
+    const block = input.slice(start, start + 6000);
+    const item = [...block.matchAll(/<a class="dropdown-item js_customDDitem" id="(\d+)">\s*<span>([^<]+)<\/span>/g)].find(match => match[1] === code);
+    if (item) return contractTypeFromLabel(item[2]);
+  }
+  return null;
+}
+function extractVacancyCards(html) {
+  const input = String(html);
+  const parts = input.split(/<a class="font-xl fw-900 lh-120"/i).slice(1);
+  if (!parts.length) return extractVacancies(input).map(id => ({ id, title: '', type: null }));
+  const cards = [];
+  for (const part of parts) {
+    const id = part.match(/Matches\/(\d+)/)?.[1];
+    if (!id) continue;
+    const title = decodeEntities(part.match(/text-capitalize-first[^>]*>([^<]+)/)?.[1] || '');
+    const tags = [...part.matchAll(/js_tagText[^>]*>([^<]+)/g)].map(match => decodeEntities(match[1]));
+    let type = null;
+    if (tags.some(tag => /^#?\s*est[aá]gio$/i.test(tag.trim()))) type = 'ESTAGIO';
+    else if (tags.some(tag => /^#?\s*clt$/i.test(tag.trim()))) type = 'CLT';
+    else if (/est[aá]gio/i.test(title)) type = 'ESTAGIO';
+    cards.push({ id, title, type });
+  }
+  return cards;
+}
 function extractFolders(html) {
   const input = String(html);
   let inscritos;
@@ -94,11 +132,37 @@ function extractCandidates(html) {
   }
   return result;
 }
+function monthNumber(name) {
+  const key = String(name || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  return { janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 }[key] || 0;
+}
 function extractDetail(html) {
   const input = String(html);
+  const born = input.match(/Nasceu(?:\s+em)?\s+(\d{1,2})\s+(?:de\s+)?([A-Za-zÀ-ÿ]+)\s+de\s+(\d{4})/i);
+  const month = born ? monthNumber(born[2]) : 0;
+  const day = born ? Number(born[1]) : 0;
+  const year = born ? Number(born[3]) : 0;
+  let nascimento = null;
+  let idade = null;
+  if (month && day >= 1 && day <= 31 && year > 1900) {
+    nascimento = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const today = new Date();
+    idade = today.getFullYear() - year - ((today.getMonth() + 1 < month || (today.getMonth() + 1 === month && today.getDate() < day)) ? 1 : 0);
+  }
+  const studyMatch = input.match(/((?:Ensino|Curso)[^<]{0,180})<\/strong>/i);
+  const studyText = decodeEntities(studyMatch?.[1] || '');
+  const level = studyText.match(/^(Ensino\s+[A-Za-zÀ-ÿ]+)/i)?.[1] || '';
+  const course = level ? studyText.slice(level.length).trim() : studyText.trim();
+  const afterStudy = studyMatch ? input.slice(studyMatch.index + studyMatch[0].length, studyMatch.index + studyMatch[0].length + 400) : '';
+  const school = decodeEntities(afterStudy.match(/<span>([^<]{2,160})<\/span>/i)?.[1] || '').replace(/,\s*$/, '').trim();
   return {
     telefone: input.match(/wa\.me\/(\d{10,15})/)?.[1] || null,
-    cep: input.match(/class="js_CandidateAddressCP">\s*CEP\s*(\d{5}-?\d{3})/i)?.[1] || null
+    cep: input.match(/class="js_CandidateAddressCP">\s*CEP\s*(\d{5}-?\d{3})/i)?.[1] || null,
+    endereco: decodeEntities(input.match(/class="js_CandidateAddress">([^<]+)/i)?.[1] || '').trim() || null,
+    nascimento,
+    idade: Number.isInteger(idade) && idade >= 0 && idade < 100 ? idade : null,
+    curso: course || null,
+    localEnsino: school || null
   };
 }
 function cookieFresh() {
@@ -210,25 +274,41 @@ async function listMatches(vacancyId, folderId, page, size, cutoff) {
   if (!data || typeof data.total !== 'number' || typeof data.viewList !== 'string') throw new Error('Formato da lista de candidatos mudou no Pandapé.');
   return { total: data.total, candidates: extractCandidates(data.viewList) };
 }
-async function findVacancyIds() {
-  const ids = new Set();
+async function resolvedType(card) {
+  if (config.vacancyTypes[card.id]) return config.vacancyTypes[card.id];
+  if (card.type) return card.type;
+  try { return extractContractType(await pandapeGet(`/Company/Vacancy/Edit/${card.id}`)); }
+  catch { return null; }
+}
+async function findVacancyIds(limit, contractType) {
+  const cap = bounded(limit, config.maxVacancies, 1, config.maxVacancies);
+  const wanted = contractType === 'CLT' || contractType === 'ESTAGIO' ? contractType : '';
+  const byId = new Map();
   let capped = false;
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= 10 && byId.size < cap; page++) {
     const body = await pandapeForm('/Company/Vacancy/ListVacancies', {
       'Pagination[PageNumber]': page, 'Pagination[PageSize]': 100,
       Order: 1, IdsFilter: 0, BeginDate: '', EndDate: '', Geo: 'false'
     });
-    const found = extractVacancies(extractHtml(body));
+    const found = extractVacancyCards(extractHtml(body));
     let added = 0;
-    for (const id of found) {
-      if (ids.size >= config.maxVacancies) { capped = true; break; }
-      if (!ids.has(id)) { ids.add(id); added++; }
+    for (const card of found) {
+      if (byId.has(card.id)) continue;
+      const type = wanted ? await resolvedType(card) : (config.vacancyTypes[card.id] || card.type || null);
+      if (wanted && type !== wanted) continue;
+      if (byId.size >= cap) { capped = true; break; }
+      byId.set(card.id, { ...card, type });
+      added++;
     }
-    if (capped || added === 0 || found.length < 100) break;
+    if (capped || found.length < 100) break;
+    if (!wanted && added === 0) break;
     if (page === 10) capped = true;
   }
-  if (!ids.size) throw new Error('Nenhuma vaga encontrada. Confira o cookie do Pandapé e o acesso aos processos.');
-  return { ids: [...ids], capped };
+  if (!byId.size) {
+    const qual = wanted === 'ESTAGIO' ? 'de estágio' : wanted === 'CLT' ? 'CLT' : '';
+    throw new Error(qual ? `Nenhuma vaga ${qual} encontrada nesse limite.` : 'Nenhuma vaga encontrada. Confira o cookie do Pandapé e o acesso aos processos.');
+  }
+  return { cards: [...byId.values()], capped, limit: cap, contractType: wanted };
 }
 async function mapLimited(items, limit, callback) {
   let next = 0;
@@ -238,19 +318,26 @@ async function mapLimited(items, limit, callback) {
   }));
   return results;
 }
-async function createPreview() {
-  const vacancyList = await findVacancyIds();
+async function createPreview(limit, contractType) {
+  const vacancyList = await findVacancyIds(limit, contractType);
   const vacancies = [];
   const candidates = [];
   const warnings = [];
   let total = 0;
   const cutoff = brTimestamp();
-  for (const id of vacancyList.ids) {
+  for (const card of vacancyList.cards) {
+    const id = card.id;
     try {
-      const folders = extractFolders(await pandapeGet(`/Company/Match/Matches/${id}`));
+      const matchPage = await pandapeGet(`/Company/Match/Matches/${id}`);
+      const folders = extractFolders(matchPage);
       if (!folders.inscritos) { warnings.push(`Vaga ${id}: aba Inscritos não encontrada.`); continue; }
+      let type = config.vacancyTypes[id] || card.type || extractContractType(matchPage);
+      if (!type) {
+        try { type = extractContractType(await pandapeGet(`/Company/Vacancy/Edit/${id}`)); }
+        catch (error) { warnings.push(`Vaga ${id}: tipo de contrato não lido (${error.message}).`); }
+      }
       const first = await listMatches(id, folders.inscritos, 1, 25, cutoff);
-      const vacancy = { id, title: folders.title || `Vaga ${id}`, type: config.vacancyTypes[id] || null, total: first.total };
+      const vacancy = { id, title: folders.title || card.title || `Vaga ${id}`, type, total: first.total };
       vacancies.push(vacancy); total += first.total;
       if (candidates.length >= config.maxCandidates || first.total === 0) continue;
       const seen = new Set();
@@ -279,16 +366,16 @@ async function createPreview() {
   snapshots.set(id, snapshot);
   for (const [key, value] of snapshots) if (value.expiresAt < Date.now()) snapshots.delete(key);
   return { snapshotId: id, expiresAt: new Date(snapshot.expiresAt).toISOString(), total, listed: candidates.length, maxImport: config.maxImport,
-    truncated: vacancyList.capped || total > candidates.length, vacancies, candidates, warnings };
+    vacancyLimit: vacancyList.limit, contractType: vacancyList.contractType, truncated: vacancyList.capped || total > candidates.length, vacancies, candidates, warnings };
 }
-function startPreview() {
+function startPreview(limit, contractType) {
   const running = [...previewJobs.values()].find(job => job.status === 'running');
   if (running) return { jobId: running.id, status: running.status };
   const job = { id: crypto.randomUUID(), status: 'running' };
   previewJobs.set(job.id, job);
   if (previewJobs.size > 20) previewJobs.delete(previewJobs.keys().next().value);
   void (async () => {
-    try { job.result = await createPreview(); job.status = 'completed'; }
+    try { job.result = await createPreview(limit, contractType); job.status = 'completed'; }
     catch (error) { job.error = error.message; job.status = 'failed'; }
   })();
   return { jobId: job.id, status: job.status };
@@ -326,11 +413,69 @@ async function missingStageWarning() {
   } catch { /* a consulta do Pandapé não depende dessa leitura */ }
   return null;
 }
+const DEAL_FIELDS = {
+  nome: 'cmp4dyx8q001roz01iptji82l',
+  cep: 'cmp4e0z42001zoz01a4wnefez',
+  endereco: 'cmp4e17hv0021oz01zqc35opj',
+  telefone: 'cmph75ym5001bpd012nrva1ep',
+  nascimento: 'cmp4dpyds000roz01b6a1vcwx',
+  idade: 'cmph7781k0021pd01837nu1zv',
+  tipo: 'cmpmup2wy009xqg01yqayxgcd',
+  titulo: 'cmsnfvxzi1s5buh01uugfrkh2',
+  curso: 'cmud4gdsf0yd6s601fxtobzh8',
+  localEnsino: 'cmph78u8n0029pd01f2k80ih0'
+};
+let crmTargets = null;
+function fold(value) { return String(value || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase(); }
+async function ensureTag(tags, name) {
+  const found = tags.find(tag => fold(tag.name) === fold(name));
+  if (found?.id) return found.id;
+  const created = await crm('POST', '/tags', { name, color: '#2563eb' });
+  if (!created?.id) throw new Error('Não foi possível criar a tag ' + name);
+  tags.push(created);
+  return created.id;
+}
+async function loadCrmTargets() {
+  if (crmTargets) return crmTargets;
+  const pipelines = await crm('GET', '/pipelines');
+  const list = Array.isArray(pipelines) ? pipelines : [];
+  const pipeline = list.find(item => fold(item.name).includes('candidatura'));
+  const stage = pipeline?.stages?.find(item => fold(item.name) === 'ativacoes');
+  if (!stage?.id) throw new Error('Etapa Ativações não encontrada no pipeline Candidaturas.');
+  const tags = items(await crm('GET', '/tags'));
+  crmTargets = {
+    stageId: stage.id,
+    tags: {
+      CLT: await ensureTag(tags, 'INFOJOBS - CLT'),
+      ESTAGIO: await ensureTag(tags, 'INFOJOBS - ESTÁGIO')
+    }
+  };
+  return crmTargets;
+}
+function dealCustomFields(c, phone) {
+  const tipo = c.tipo === 'ESTAGIO' ? 'Estágio' : 'CLT';
+  const values = {
+    nome: c.nome,
+    cep: c.cep,
+    endereco: c.endereco,
+    telefone: phone ? Number(phone) : null,
+    nascimento: c.nascimento,
+    idade: c.idade,
+    tipo,
+    titulo: c.vaga,
+    curso: c.curso,
+    localEnsino: c.localEnsino
+  };
+  return Object.entries(values)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => ({ customFieldId: DEAL_FIELDS[key], value }));
+}
 async function createInCrm(c) {
   if (!c.telefone) return { key: c.key, status: 'sem_telefone', nome: c.nome };
   const phone = canonicalPhone(c.telefone);
   const result = { key: c.key, status: 'erro', nome: c.nome, contactId: null, dealId: null };
   try {
+    const targets = await loadCrmTargets();
     const found = items(await crm('GET', '/contacts?phone=' + encodeURIComponent(`+${phone}`)));
     let contact = found.find(x => samePhone(x.phone, phone));
     if (!contact) contact = await crm('POST', '/contacts', { name: c.nome, phone });
@@ -338,13 +483,20 @@ async function createInCrm(c) {
     result.contactId = contact.id;
     const deals = items(await crm('GET', '/deals?contactId=' + encodeURIComponent(contact.id)));
     if (deals.length) { result.status = 'ja_existe'; result.dealId = deals[0].id; return result; }
-    const deal = await crm('POST', '/deals', { stageId: config.stageId, contactId: contact.id, title: c.nome });
+    const deal = await crm('POST', '/deals', {
+      stageId: targets.stageId,
+      contactId: contact.id,
+      title: c.nome,
+      customFields: dealCustomFields(c, phone)
+    });
     if (!deal?.id) throw new Error('CRM não retornou o ID do negócio.');
     result.dealId = deal.id;
-    const note = `Candidato via Pandapé / Infojobs — vaga: ${c.vaga} (${c.tipo}, processo ${c.idVacancy}, match ${c.idMatch})${c.cep ? ` — CEP: ${c.cep}` : ''}.`;
+    const note = `Candidato via Pandapé / Infojobs — vaga: ${c.vaga} (${c.tipo === 'ESTAGIO' ? 'Estágio' : 'CLT'}, processo ${c.idVacancy}, match ${c.idMatch})${c.cep ? ` — CEP: ${c.cep}` : ''}.`;
     try {
       await crm('POST', `/deals/${encodeURIComponent(deal.id)}/notes`, { content: note });
-      if (config.tagId) await crm('POST', `/deals/${encodeURIComponent(deal.id)}/tags`, { tagId: config.tagId });
+      const tagId = targets.tags[c.tipo];
+      if (!tagId) throw new Error('Tag do tipo de contrato não encontrada.');
+      await crm('POST', `/deals/${encodeURIComponent(deal.id)}/tags`, { tagId });
       result.status = 'criado';
     } catch (error) { result.status = 'parcial'; result.error = `Negócio criado, mas nota/tag falhou: ${error.message}`; }
   } catch (error) { result.error = error.message; }
@@ -389,7 +541,8 @@ async function importCandidates(input) {
   const byKey = new Map(snapshot.candidates.map(c => [c.key, c]));
   const selected = keys.map(key => byKey.get(key));
   if (selected.some(c => !c)) throw Object.assign(new Error('Candidato fora da consulta.'), { status: 400 });
-  if (selected.some(c => (config.vacancyTypes[c.idVacancy] || classifications[c.idVacancy]) !== input.tipo)) {
+  const resolvedType = c => config.vacancyTypes[c.idVacancy] || c.tipo || snapshot.vacancies.find(v => v.id === c.idVacancy)?.type || classifications[c.idVacancy];
+  if (selected.some(c => resolvedType(c) !== input.tipo)) {
     throw Object.assign(new Error('Classifique todas as vagas selecionadas com o tipo escolhido.'), { status: 400 });
   }
   const serverCandidates = selected.map(c => ({ ...c, tipo: input.tipo }));
@@ -407,8 +560,7 @@ async function importCandidates(input) {
       if (!membership.has(c.key)) result = { key: c.key, nome: c.nome, status: 'nao_inscrito' };
       else {
         try {
-          const fresh = extractDetail(await pandapeGet(`/Company/Match/Matches/${c.idVacancy}?idvacancyfolder=${c.folderId}&idMatch=${c.idMatch}`));
-          c.telefone = fresh.telefone; c.cep = fresh.cep;
+          Object.assign(c, extractDetail(await pandapeGet(`/Company/Match/Matches/${c.idVacancy}?idvacancyfolder=${c.folderId}&idMatch=${c.idMatch}`)));
           if (c.telefone && seenPhones.has(canonicalPhone(c.telefone))) result = { key: c.key, nome: c.nome, status: 'telefone_repetido' };
           else {
             if (c.telefone) seenPhones.add(canonicalPhone(c.telefone));
@@ -442,11 +594,14 @@ function authorized(req) {
   if (delimiter < 0) return false;
   return equalSecret(text.slice(0, delimiter), config.user) && equalSecret(text.slice(delimiter + 1), config.password);
 }
-function readJson(req) {
+function readJson(req, allowEmpty = false) {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 128_000) { reject(Object.assign(new Error('Pedido grande demais.'), { status: 413 })); req.destroy(); } });
-    req.on('end', () => { try { resolve(JSON.parse(body)); } catch { reject(Object.assign(new Error('JSON inválido.'), { status: 400 })); } });
+    req.on('end', () => {
+      if (!body) { if (allowEmpty) resolve({}); else reject(Object.assign(new Error('JSON inválido.'), { status: 400 })); return; }
+      try { resolve(JSON.parse(body)); } catch { reject(Object.assign(new Error('JSON inválido.'), { status: 400 })); }
+    });
     req.on('error', reject);
   });
 }
@@ -472,7 +627,11 @@ async function route(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/preview') {
     const origin = req.headers.origin;
     if (origin && new URL(origin).host !== req.headers.host) return send(res, 403, { error: 'Origem não permitida.' });
-    return send(res, 202, startPreview());
+    const input = await readJson(req, true);
+    const maxVacancies = input && typeof input === 'object' ? input.maxVacancies : undefined;
+    const contractType = input && typeof input === 'object' ? input.contractType || '' : '';
+    if (contractType && contractType !== 'CLT' && contractType !== 'ESTAGIO') return send(res, 400, { error: 'Tipo de contrato inválido. Use CLT ou estágio.' });
+    return send(res, 202, startPreview(maxVacancies, contractType));
   }
   if (req.method === 'GET' && /^\/api\/preview\/[0-9a-f-]{36}$/i.test(url.pathname)) {
     const job = previewJobs.get(url.pathname.split('/').pop());
@@ -500,6 +659,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  extractVacancies, extractFolders, extractCandidates, extractDetail, decodeEntities,
+  extractVacancies, extractVacancyCards, extractFolders, extractContractType, extractCandidates, extractDetail, decodeEntities,
   getPandapeCookie, resetLoginState, listMatches, canonicalPhone, samePhone, stageIsKnown
 };

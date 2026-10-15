@@ -18,8 +18,9 @@
     .badge.live { background:#e0f5e8; color:#186249; }
     .card { background:#fff; border:1px solid #e1e8ef; border-radius:16px; box-shadow:0 8px 25px rgba(14,44,66,.04); padding:21px; margin:0 0 16px; }
     .row { display:flex; align-items:center; justify-content:space-between; gap:14px; } .row.wrap { flex-wrap:wrap; }
-    .form-grid { display:grid; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px; margin-top:18px; }
-    .controls { display:grid; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px; margin:20px 0 14px; }
+    .form-grid { display:grid; grid-template-columns:1fr 1fr 160px 130px auto; align-items:end; gap:12px; margin-top:18px; }
+    .controls { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin:20px 0 14px; }
+    .controls label { flex:1 1 160px; } .controls .btn { flex:0 0 auto; }
     label { display:grid; gap:6px; font-size:12px; font-weight:750; color:#4b6074; }
     input,select { width:100%; min-height:42px; border:1px solid #cbd8e4; background:#fff; color:#1e3042; border-radius:9px; padding:8px 10px; }
     input[type="checkbox"] { width:16px; height:16px; min-height:0; accent-color:#1c6da6; }
@@ -44,6 +45,8 @@
     .empty { padding:32px; text-align:center; color:#738596; }
     .hidden { display:none !important; } .compact-select { width:auto; min-width:125px; font-size:12px; }
     .split { display:flex; flex-wrap:wrap; gap:15px; align-items:center; } .split .muted { max-width:800px; }
+    .pager { display:flex; gap:8px; align-items:center; justify-content:flex-end; margin-top:12px; }
+    .pager button:disabled { opacity:.45; }
     .progress { height:7px; background:#e3eaf1; border-radius:10px; overflow:hidden; margin-top:14px; }
     .progress > span { display:block; height:100%; background:#2084b5; width:0; transition:width .25s; }
     dialog { border:0; border-radius:17px; max-width:min(500px,calc(100vw - 28px)); width:100%; padding:26px; box-shadow:0 24px 80px rgba(16,38,60,.28); }
@@ -58,7 +61,7 @@
   <section class="card" aria-labelledby="accessTitle">
     <h2 id="accessTitle">1. Acessar e consultar</h2>
     <p class="muted">Use o usuário e a senha definidos no servidor. Eles permanecem somente nesta aba.</p>
-    <div class="form-grid"><label>Usuário<input id="username" autocomplete="username"></label><label>Senha<input id="password" type="password" autocomplete="current-password"></label><button id="loadBtn" class="btn">Buscar inscritos</button></div>
+    <div class="form-grid"><label>Usuário<input id="username" autocomplete="username"></label><label>Senha<input id="password" type="password" autocomplete="current-password"></label><label>Tipo de contrato<select id="searchType"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Limite de vagas<input id="vacancyLimit" type="number" min="1" max="500" step="1" value="20" inputmode="numeric"></label><button id="loadBtn" class="btn">Buscar inscritos</button></div>
     <div id="loadStatus" class="status" role="status" aria-live="polite"></div>
     <div class="note">A consulta é somente leitura: não move candidatos e não envia WhatsApp. O total mostra todos os inscritos das vagas consultadas; a tabela pode ter um limite de linhas configurado no servidor.</div>
   </section>
@@ -68,14 +71,15 @@
     <div id="metrics" class="metrics"></div>
     <div id="warnings" class="status"></div>
     <div class="table-wrap"><table><thead><tr><th>Vaga</th><th>ID Pandapé</th><th>Inscritos</th><th>Tipo de contrato</th></tr></thead><tbody id="vacancyRows"></tbody></table></div>
-    <p class="muted" style="margin-top:12px">Se uma vaga não vier classificada, escolha CLT ou estágio na linha dela. A classificação vale para esta consulta; o administrador pode fixá-la no servidor.</p>
+    <p class="muted" style="margin-top:12px">O tipo vem da etiqueta #CLT ou #Estágio e, se ela não existir, do campo Tipo de contrato da vaga. A escolha manual só aparece quando nenhum dos dois define o tipo.</p>
   </section>
 
   <section id="peopleSection" class="card hidden" aria-labelledby="peopleTitle">
-    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">A seleção é individual. Você também pode marcar as primeiras pessoas do tipo escolhido.</p></div><button id="clearBtn" class="minor">Limpar seleção</button></div>
-    <div class="controls"><label>Tipo de vaga<select id="typeFilter"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade para selecionar<input id="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex.: 20"></label><button id="selectFirstBtn" class="btn alt" disabled>Selecionar primeiras</button></div>
+    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">Marque pessoas, a página inteira ou todos do tipo filtrado. O lote respeita o máximo do servidor.</p></div><button id="clearBtn" class="minor">Limpar seleção</button></div>
+    <div class="controls"><label>Tipo de vaga<select id="typeFilter"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade para selecionar<input id="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex.: 20"></label><button id="selectFirstBtn" class="btn alt" disabled>Selecionar primeiras</button><button id="selectPageBtn" class="btn alt" disabled>Selecionar página</button><button id="selectAllBtn" class="btn alt" disabled>Selecionar todos</button></div>
     <div class="split"><p id="selection" class="muted"></p><p id="tableCount" class="muted"></p></div>
-    <div class="table-wrap"><table><thead><tr><th>Escolher</th><th>Candidato</th><th>Telefone</th><th>CEP</th><th>Vaga</th><th>Tipo</th></tr></thead><tbody id="candidateRows"></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th><input id="pageCheck" type="checkbox" aria-label="Selecionar as pessoas desta página"></th><th>Candidato</th><th>Telefone</th><th>CEP</th><th>Vaga</th><th>Tipo</th></tr></thead><tbody id="candidateRows"></tbody></table></div>
+    <div class="pager"><button id="pagePrev" class="minor" type="button">Anterior</button><span id="pageLabel" class="muted"></span><button id="pageNext" class="minor" type="button">Próxima</button></div>
     <div class="row wrap" style="margin-top:18px"><p class="muted">Criar no CRM: contato (se necessário), negócio, nota com vaga e tag configurada. Negócios já existentes são pulados.</p><button id="reviewBtn" class="btn danger" disabled>Revisar criação no CRM</button></div>
     <div id="jobStatus" class="status" role="status" aria-live="polite"></div><div id="progress" class="progress hidden"><span id="progressBar"></span></div>
     <div id="results" class="table-wrap hidden"><table><thead><tr><th>Pessoa</th><th>Resultado</th><th>Contato</th><th>Negócio</th></tr></thead><tbody id="resultRows"></tbody></table></div>
@@ -88,10 +92,12 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const e = Object.fromEntries(['username','password','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn'].map(id => [id,$(id)]));
+  const e = Object.fromEntries(['username','password','searchType','vacancyLimit','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selectPageBtn','selectAllBtn','pageCheck','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn','pagePrev','pageNext','pageLabel'].map(id => [id,$(id)]));
+  const PAGE_SIZE = 25;
   let snapshot = null;
   let classification = {};
   let selected = new Set();
+  let peoplePage = 1;
   let busy = false;
   let requestId = null;
   let lastSelection = '';
@@ -127,13 +133,28 @@
       row.append(td); e.vacancyRows.append(row);
     }
   }
+  function filteredPeople() {
+    const type=e.typeFilter.value;
+    return snapshot.candidates.filter(c=>!type||typeOf(c)===type);
+  }
+  function selectablePeople() {
+    const visible=filteredPeople().filter(c=>typeOf(c));
+    const types=[...new Set(visible.map(typeOf))];
+    if (types.length<=1) return visible;
+    const preferred=types.includes(e.typeFilter.value)?e.typeFilter.value:types[0];
+    return visible.filter(c=>typeOf(c)===preferred);
+  }
   function renderPeople() {
     if (!snapshot) return;
-    const type=e.typeFilter.value;
-    const visible=snapshot.candidates.filter(c=>!type||typeOf(c)===type);
+    const visible=filteredPeople();
+    const pages=Math.max(1, Math.ceil(visible.length/PAGE_SIZE));
+    if (peoplePage>pages) peoplePage=pages;
+    if (peoplePage<1) peoplePage=1;
+    const start=(peoplePage-1)*PAGE_SIZE;
+    const pageItems=visible.slice(start, start+PAGE_SIZE);
     e.candidateRows.replaceChildren();
     if (!visible.length) { const row=document.createElement('tr'),td=cell(row,'Nenhuma pessoa com esse filtro.'); td.colSpan=6; td.className='empty'; e.candidateRows.append(row); }
-    for (const c of visible) {
+    for (const c of pageItems) {
       const row=document.createElement('tr'), td=document.createElement('td'), box=document.createElement('input');
       box.type='checkbox'; box.checked=selected.has(c.key); box.disabled=!typeOf(c)||busy; box.setAttribute('aria-label','Selecionar '+c.nome);
       box.addEventListener('change',()=>{ if(box.checked) selected.add(c.key); else selected.delete(c.key); updateSelection(); });
@@ -143,13 +164,24 @@
       const typeCell=document.createElement('td'),pill=document.createElement('span'),category=typeOf(c); pill.className='pill'+(category==='ESTAGIO'?' stage':!category?' unknown':''); pill.textContent=category==='ESTAGIO'?'Estágio':category||'Classificar vaga'; typeCell.append(pill); row.append(typeCell);
       e.candidateRows.append(row);
     }
-    e.tableCount.textContent=`${visible.length} pessoa(s) mostradas nesta consulta.`;
+    const pageKeys=pageItems.filter(c=>typeOf(c)).map(c=>c.key);
+    const marked=pageKeys.filter(key=>selected.has(key)).length;
+    e.pageCheck.checked=pageKeys.length>0&&marked===pageKeys.length;
+    e.pageCheck.indeterminate=marked>0&&marked<pageKeys.length;
+    e.pageCheck.disabled=!pageKeys.length||busy;
+    e.pageLabel.textContent=visible.length?`${start+1}–${start+pageItems.length} de ${visible.length} · página ${peoplePage} de ${pages}`:'Nenhuma pessoa';
+    e.pagePrev.disabled=peoplePage<=1;
+    e.pageNext.disabled=peoplePage>=pages;
+    e.tableCount.textContent=`${visible.length} pessoa(s) nesta consulta.`;
     updateSelection();
   }
   function updateSelection() {
     if (!snapshot) return;
     const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))).filter(Boolean))];
     const n=Number(e.quantity.value), available=snapshot.candidates.filter(c=>typeOf(c)===e.typeFilter.value).length;
+    const canSelect=selectablePeople().length>0&&!busy;
+    e.selectPageBtn.disabled=!canSelect;
+    e.selectAllBtn.disabled=!canSelect;
     e.selectFirstBtn.disabled=busy||!e.typeFilter.value||!Number.isInteger(n)||n<1||n>available||n>snapshot.maxImport;
     e.reviewBtn.disabled=busy||selected.size===0||selected.size>snapshot.maxImport||types.length!==1;
     e.selection.textContent=`${selected.size} selecionado(s) · máximo ${snapshot.maxImport} por lote`+(types.length>1?' · selecione apenas uma categoria por lote':'')+'.';
@@ -159,7 +191,11 @@
     if (busy) return; busy=true; e.loadBtn.disabled=true; e.refreshBtn.disabled=true;
     message(e.loadStatus,'Consultando vagas, inscritos e detalhes no Pandapé. Isso pode levar alguns minutos…');
     try {
-      const started=await api('/api/preview',{method:'POST'});
+      const maxVacancies=Number(e.vacancyLimit.value);
+      const contractType=e.searchType.value;
+      if(!Number.isInteger(maxVacancies)||maxVacancies<1||maxVacancies>500) throw new Error('Informe um limite de vagas entre 1 e 500 antes de buscar.');
+      if(contractType&&contractType!=='CLT'&&contractType!=='ESTAGIO') throw new Error('Escolha CLT, estágio ou todos.');
+      const started=await api('/api/preview',{method:'POST',body:JSON.stringify({maxVacancies,contractType})});
       if(!started.jobId) throw new Error('Servidor não retornou o ID da consulta.');
       let job;
       do {
@@ -169,11 +205,13 @@
       } while(job.status==='running');
       const data=job.result;
       if(!Array.isArray(data.candidates)||!Array.isArray(data.vacancies)||!data.snapshotId) throw new Error('Resposta inesperada do servidor.');
-      snapshot=data; classification={}; selected.clear(); requestId=null;
+      snapshot=data; classification={}; selected.clear(); peoplePage=1; requestId=null;
       e.previewSection.classList.remove('hidden'); e.peopleSection.classList.remove('hidden');
       e.metrics.replaceChildren(); metric(data.total,'Inscritos nas vagas consultadas'); metric(data.listed,'Pessoas na tabela'); metric(data.vacancies.length,'Vagas encontradas'); metric(data.vacancies.filter(v=>!v.type).length,'Vagas a classificar');
-      e.freshness.textContent='Consulta feita em '+new Date().toLocaleString('pt-BR')+' · válida por 15 minutos.';
-      message(e.warnings,[data.truncated?'Lista limitada pelo teto configurado no servidor.':'',...(data.warnings||[]).slice(0,5)].filter(Boolean).join('\n'));
+      const tipoBusca=data.contractType==='ESTAGIO'?'estágio':data.contractType==='CLT'?'CLT':'todos os tipos';
+      e.freshness.textContent='Consulta de '+tipoBusca+' feita em '+new Date().toLocaleString('pt-BR')+' · válida por 15 minutos.';
+      if(data.contractType) e.typeFilter.value=data.contractType;
+      message(e.warnings,[data.truncated?`Lista limitada a ${data.vacancyLimit||maxVacancies} vaga(s).`:'',...(data.warnings||[]).slice(0,5)].filter(Boolean).join('\n'));
       message(e.loadStatus,'Consulta concluída. Nenhuma alteração feita no Pandapé ou CRM.');
       e.badge.textContent='Conectado'; e.badge.classList.add('live');
       e.results.classList.add('hidden'); message(e.jobStatus,''); renderVacancies(); renderPeople();
@@ -209,9 +247,28 @@
     } catch(error) { message(e.jobStatus,error.message+' Confira o servidor antes de repetir.',true); busy=false; e.loadBtn.disabled=false; e.refreshBtn.disabled=false; e.confirmBtn.disabled=false; renderPeople(); }
   }
   e.loadBtn.addEventListener('click',load); e.refreshBtn.addEventListener('click',load);
-  e.typeFilter.addEventListener('change',()=>{ selected.clear(); renderPeople(); });
+  e.typeFilter.addEventListener('change',()=>{ selected.clear(); peoplePage=1; renderPeople(); });
   e.quantity.addEventListener('input',updateSelection);
   e.clearBtn.addEventListener('click',()=>{ selected.clear(); renderPeople(); });
+  e.pagePrev.addEventListener('click',()=>{ peoplePage-=1; renderPeople(); });
+  e.pageNext.addEventListener('click',()=>{ peoplePage+=1; renderPeople(); });
+  function setPageSelection(mark) {
+    const visible=filteredPeople();
+    const start=(peoplePage-1)*PAGE_SIZE;
+    for (const c of visible.slice(start, start+PAGE_SIZE)) {
+      if (!typeOf(c)) continue;
+      if (mark) { if (selected.size<snapshot.maxImport) selected.add(c.key); }
+      else selected.delete(c.key);
+    }
+    renderPeople();
+  }
+  e.pageCheck.addEventListener('change',()=>setPageSelection(e.pageCheck.checked));
+  e.selectPageBtn.addEventListener('click',()=>setPageSelection(true));
+  e.selectAllBtn.addEventListener('click',()=>{
+    const pool=selectablePeople();
+    selected=new Set(pool.slice(0, snapshot.maxImport).map(c=>c.key));
+    renderPeople();
+  });
   e.selectFirstBtn.addEventListener('click',()=>{
     const n=Number(e.quantity.value), type=e.typeFilter.value;
     if(!type||!Number.isInteger(n)||n<1) return;
