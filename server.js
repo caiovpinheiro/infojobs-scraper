@@ -1,0 +1,505 @@
+'use strict';
+
+// Aplicativo local: navegador e API usam a mesma origem. Requer Node.js 20+.
+const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+
+function loadDotEnv(file = path.join(__dirname, '.env')) {
+  if (!fs.existsSync(file)) return;
+  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (!match || Object.hasOwn(process.env, match[1])) continue;
+    let value = match[2];
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    process.env[match[1]] = value;
+  }
+}
+loadDotEnv();
+
+const config = {
+  port: Number(process.env.PORT || 3000),
+  user: process.env.APP_USER || '', password: process.env.APP_PASSWORD || '',
+  cookie: process.env.PANDAPE_COOKIE || '',
+  loginUrl: (process.env.PANDAPE_LOGIN_URL || '').replace(/\/+$/, ''),
+  loginToken: process.env.PANDAPE_LOGIN_TOKEN || '',
+  pandapeBase: (process.env.PANDAPE_BASE_URL || 'https://pandape.infojobs.com.br').replace(/\/+$/, ''),
+  crmBase: (process.env.CRM_BASE_URL || 'https://integrations.bwipo.com/api').replace(/\/+$/, ''),
+  crmKey: process.env.CRM_API_KEY || '',
+  stageId: process.env.CRM_STAGE_ID || '', tagId: process.env.CRM_TAG_ID || '',
+  maxVacancies: bounded(process.env.MAX_VACANCIES, 100, 1, 500),
+  maxCandidates: bounded(process.env.MAX_CANDIDATES, 500, 1, 2000),
+  maxImport: bounded(process.env.MAX_IMPORT, 100, 1, 500),
+  vacancyTypes: parseTypes(process.env.VACANCY_TYPES_JSON || '{}')
+};
+function bounded(value, fallback, min, max) { const n = Number(value); return Number.isInteger(n) && n >= min && n <= max ? n : fallback; }
+function parseTypes(value) {
+  let mapping;
+  try { mapping = JSON.parse(value); } catch { throw new Error('VACANCY_TYPES_JSON não é um JSON válido.'); }
+  if (!mapping || Array.isArray(mapping) || typeof mapping !== 'object') throw new Error('VACANCY_TYPES_JSON deve ser um objeto por ID da vaga.');
+  for (const [id, type] of Object.entries(mapping)) {
+    if (!/^\d+$/.test(id) || !['CLT', 'ESTAGIO'].includes(type)) throw new Error('VACANCY_TYPES_JSON tem ID ou tipo inválido.');
+  }
+  return mapping;
+}
+if (require.main === module && (!config.user || !config.password || !(config.loginUrl && config.loginToken || config.cookie) || !config.crmKey || !config.stageId || Boolean(config.loginUrl) !== Boolean(config.loginToken))) {
+  console.error('Configure APP_USER, APP_PASSWORD, CRM_API_KEY, CRM_STAGE_ID e PANDAPE_LOGIN_URL + PANDAPE_LOGIN_TOKEN (ou PANDAPE_COOKIE) no .env.');
+  process.exit(1);
+}
+
+const snapshots = new Map();
+const previewJobs = new Map();
+const imports = new Map();
+const jobs = new Map();
+const attempts = new Map();
+let activeImport = false;
+let loginCookie = null;
+let loginCookieExpiresAt = 0;
+let loginQueue = Promise.resolve();
+const COOKIE_SKEW_MS = 60 * 1000;
+
+function decodeEntities(value) {
+  const names = { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', nbsp: ' ' };
+  return String(value || '').replace(/&(#(?:x[\da-f]+|\d+)|[a-z]+);/gi, (full, entity) => {
+    if (entity[0] !== '#') return names[entity.toLowerCase()] ?? full;
+    const n = entity[1].toLowerCase() === 'x' ? parseInt(entity.slice(2), 16) : parseInt(entity.slice(1), 10);
+    return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : full;
+  }).replace(/<[^>]+>/g, '').trim();
+}
+function extractVacancies(html) {
+  const ids = new Set();
+  for (const match of String(html).matchAll(/\/Company\/Match\/Matches\/(\d+)\?idvacancyfolder=\d+/g)) ids.add(match[1]);
+  return [...ids];
+}
+function extractFolders(html) {
+  const input = String(html);
+  let inscritos;
+  for (const tag of input.matchAll(/<a\b[^>]*>/gi)) {
+    const el = tag[0];
+    if (!/\btitle="Inscritos"/i.test(el)) continue;
+    const href = el.match(/\bhref="([^"]+)"/i)?.[1] || '';
+    const folder = href.match(/[?&]idvacancyfolder=(\d+)/i)?.[1];
+    if (folder) { inscritos = folder; break; }
+  }
+  return {
+    inscritos,
+    title: decodeEntities(input.match(/id="hdnVacancyName"\s+value="([^"]*)"/i)?.[1] || '')
+  };
+}
+function extractCandidates(html) {
+  const result = [];
+  for (const match of String(html).matchAll(/<a href="\?idMatch=(\d+)"[^>]*data-username="([^"]*)"/g)) {
+    result.push({ idMatch: match[1], nome: decodeEntities(match[2]) });
+  }
+  return result;
+}
+function extractDetail(html) {
+  const input = String(html);
+  return {
+    telefone: input.match(/wa\.me\/(\d{10,15})/)?.[1] || null,
+    cep: input.match(/class="js_CandidateAddressCP">\s*CEP\s*(\d{5}-?\d{3})/i)?.[1] || null
+  };
+}
+function cookieFresh() {
+  return Boolean(loginCookie) && loginCookieExpiresAt - Date.now() > COOKIE_SKEW_MS;
+}
+function enqueueLogin(task) {
+  const run = loginQueue.then(task, task);
+  loginQueue = run.then(() => {}, () => {});
+  return run;
+}
+function parseExpiry(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  return Date.parse(value);
+}
+async function fetchLoginCookie(force) {
+  let response;
+  try {
+    response = await fetch(`${config.loginUrl}/cookie${force ? '?force=1' : ''}`, {
+      headers: { 'X-Auth-Token': config.loginToken, Accept: 'application/json' },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(120000)
+    });
+  } catch { throw new Error('Não foi possível acessar o serviço pandape-login.'); }
+  if (response.status >= 300 && response.status < 400) throw new Error('pandape-login redirecionou a requisição.');
+  if (!response.ok) throw new Error(`pandape-login retornou HTTP ${response.status}.`);
+  let data;
+  try { data = await response.json(); } catch { throw new Error('Resposta inválida do pandape-login.'); }
+  const expiry = parseExpiry(data.expiresAt);
+  if (typeof data.cookie !== 'string' || !/^ats-webui=[^;\s]+$/.test(data.cookie) || !Number.isFinite(expiry) || expiry <= Date.now()) {
+    throw new Error('Cookie ou validade inválida na resposta do pandape-login.');
+  }
+  loginCookie = data.cookie;
+  loginCookieExpiresAt = expiry;
+  return loginCookie;
+}
+async function getPandapeCookie(force = false) {
+  if (!config.loginUrl) return config.cookie;
+  return enqueueLogin(async () => {
+    if (!force && cookieFresh()) return loginCookie;
+    if (force) { loginCookie = null; loginCookieExpiresAt = 0; }
+    return fetchLoginCookie(force);
+  });
+}
+function resetLoginState() {
+  loginCookie = null;
+  loginCookieExpiresAt = 0;
+  loginQueue = Promise.resolve();
+}
+async function pandapeHeaders(form = false, force = false) {
+  return { Cookie: await getPandapeCookie(force), 'X-Requested-With': 'XMLHttpRequest',
+    ...(form ? { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' } : {}) };
+}
+function pandapeAuthError() {
+  const error = new Error('Sessão do Pandapé expirou ou foi recusada.');
+  error.code = 'PANDAPE_AUTH';
+  return error;
+}
+async function upstream(url, options = {}) {
+  let response;
+  try { response = await fetch(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(30000) }); }
+  catch { throw new Error('Falha de conexão com serviço externo.'); }
+  if (response.status >= 300 && response.status < 400) {
+    if (url.startsWith(config.pandapeBase)) throw pandapeAuthError();
+    throw new Error('Serviço externo redirecionou a requisição; verifique sessão e URL.');
+  }
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Serviço externo retornou HTTP ${response.status}.`);
+  if (url.startsWith(config.pandapeBase) && (/<input[^>]*type=["']password/i.test(text) || /\/Account\/Login/i.test(response.url))) {
+    throw pandapeAuthError();
+  }
+  return text;
+}
+function extractHtml(body) {
+  if (typeof body === 'string' && body.trim().startsWith('{')) {
+    try { const data = JSON.parse(body); if (typeof data.view === 'string') return data.view; } catch { /* HTML normal */ }
+  }
+  return body;
+}
+async function pandapeGet(relativePath) {
+  return extractHtml(await pandapeRequest(relativePath));
+}
+async function pandapeForm(relativePath, params) {
+  return pandapeRequest(relativePath, params);
+}
+async function pandapeRequest(relativePath, params) {
+  const form = params !== undefined;
+  const makeRequest = async force => upstream(config.pandapeBase + relativePath, {
+    ...(form ? { method: 'POST', body: new URLSearchParams(params).toString() } : {}),
+    headers: await pandapeHeaders(form, force)
+  });
+  try { return await makeRequest(false); }
+  catch (error) {
+    if (error.code !== 'PANDAPE_AUTH' || !config.loginUrl) throw error;
+    return makeRequest(true);
+  }
+}
+function brTimestamp() {
+  const p = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(new Date());
+  const get = key => p.find(x => x.type === key).value;
+  return `${get('day')}/${get('month')}/${get('year')} ${get('hour')}:${get('minute')}:${get('second')}`;
+}
+async function listMatches(vacancyId, folderId, page, size, cutoff) {
+  const body = await pandapeForm('/Company/Match/ListMatches', {
+    PageNumber: page, PageSize: size, Order: 0, IsLast: 'False', IdVacancy: vacancyId,
+    IdVacancyFolder: folderId, MaxDatetimeToLoad: cutoff
+  });
+  let data;
+  try { data = JSON.parse(body); } catch { throw new Error('Pandapé não retornou a lista de candidatos em JSON. Verifique o cookie.'); }
+  if (!data || typeof data.total !== 'number' || typeof data.viewList !== 'string') throw new Error('Formato da lista de candidatos mudou no Pandapé.');
+  return { total: data.total, candidates: extractCandidates(data.viewList) };
+}
+async function findVacancyIds() {
+  const ids = new Set();
+  let capped = false;
+  for (let page = 1; page <= 10; page++) {
+    const body = await pandapeForm('/Company/Vacancy/ListVacancies', {
+      'Pagination[PageNumber]': page, 'Pagination[PageSize]': 100,
+      Order: 1, IdsFilter: 0, BeginDate: '', EndDate: '', Geo: 'false'
+    });
+    const found = extractVacancies(extractHtml(body));
+    let added = 0;
+    for (const id of found) {
+      if (ids.size >= config.maxVacancies) { capped = true; break; }
+      if (!ids.has(id)) { ids.add(id); added++; }
+    }
+    if (capped || added === 0 || found.length < 100) break;
+    if (page === 10) capped = true;
+  }
+  if (!ids.size) throw new Error('Nenhuma vaga encontrada. Confira o cookie do Pandapé e o acesso aos processos.');
+  return { ids: [...ids], capped };
+}
+async function mapLimited(items, limit, callback) {
+  let next = 0;
+  const results = new Array(items.length);
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) { const idx = next++; results[idx] = await callback(items[idx], idx); }
+  }));
+  return results;
+}
+async function createPreview() {
+  const vacancyList = await findVacancyIds();
+  const vacancies = [];
+  const candidates = [];
+  const warnings = [];
+  let total = 0;
+  const cutoff = brTimestamp();
+  for (const id of vacancyList.ids) {
+    try {
+      const folders = extractFolders(await pandapeGet(`/Company/Match/Matches/${id}`));
+      if (!folders.inscritos) { warnings.push(`Vaga ${id}: aba Inscritos não encontrada.`); continue; }
+      const first = await listMatches(id, folders.inscritos, 1, 25, cutoff);
+      const vacancy = { id, title: folders.title || `Vaga ${id}`, type: config.vacancyTypes[id] || null, total: first.total };
+      vacancies.push(vacancy); total += first.total;
+      if (candidates.length >= config.maxCandidates || first.total === 0) continue;
+      const seen = new Set();
+      for (let page = 1; page <= 80 && seen.size < first.total && candidates.length < config.maxCandidates; page++) {
+        const batch = page === 1 ? first : await listMatches(id, folders.inscritos, page, 25, cutoff);
+        if (!batch.candidates.length) break;
+        for (const c of batch.candidates) {
+          if (seen.has(c.idMatch)) continue;
+          seen.add(c.idMatch);
+          candidates.push({ key: `${id}:${c.idMatch}`, idMatch: c.idMatch, idVacancy: id, nome: c.nome,
+            vaga: vacancy.title, tipo: vacancy.type, telefone: null, cep: null, folderId: folders.inscritos });
+          if (candidates.length >= config.maxCandidates) break;
+        }
+      }
+    } catch (error) { warnings.push(`Vaga ${id}: ${error.message}`); }
+  }
+  await mapLimited(candidates, 5, async c => {
+    try {
+      Object.assign(c, extractDetail(await pandapeGet(`/Company/Match/Matches/${c.idVacancy}?idvacancyfolder=${c.folderId}&idMatch=${c.idMatch}`)));
+    } catch (error) { c.detailError = error.message; }
+  });
+  const stageWarning = await missingStageWarning();
+  if (stageWarning) warnings.push(stageWarning);
+  const id = crypto.randomUUID();
+  const snapshot = { id, candidates, vacancies, expiresAt: Date.now() + 15 * 60_000 };
+  snapshots.set(id, snapshot);
+  for (const [key, value] of snapshots) if (value.expiresAt < Date.now()) snapshots.delete(key);
+  return { snapshotId: id, expiresAt: new Date(snapshot.expiresAt).toISOString(), total, listed: candidates.length, maxImport: config.maxImport,
+    truncated: vacancyList.capped || total > candidates.length, vacancies, candidates, warnings };
+}
+function startPreview() {
+  const running = [...previewJobs.values()].find(job => job.status === 'running');
+  if (running) return { jobId: running.id, status: running.status };
+  const job = { id: crypto.randomUUID(), status: 'running' };
+  previewJobs.set(job.id, job);
+  if (previewJobs.size > 20) previewJobs.delete(previewJobs.keys().next().value);
+  void (async () => {
+    try { job.result = await createPreview(); job.status = 'completed'; }
+    catch (error) { job.error = error.message; job.status = 'failed'; }
+  })();
+  return { jobId: job.id, status: job.status };
+}
+function canonicalPhone(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('55') && digits.length >= 12) return digits;
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+function samePhone(left, right) {
+  const a = canonicalPhone(left);
+  const b = canonicalPhone(right);
+  return Boolean(a) && a === b;
+}
+async function crm(method, relativePath, payload) {
+  const body = await upstream(config.crmBase + relativePath, {
+    method, headers: { Authorization: `Bearer ${config.crmKey}`, ...(payload ? { 'Content-Type': 'application/json' } : {}) },
+    ...(payload ? { body: JSON.stringify(payload) } : {})
+  });
+  try { return JSON.parse(body); } catch { return null; }
+}
+function items(body) { return Array.isArray(body) ? body : Array.isArray(body?.items) ? body.items : []; }
+function stageIsKnown(pipelines, stageId) {
+  if (!Array.isArray(pipelines) || !pipelines.length || !stageId) return null;
+  const ids = pipelines.flatMap(pipeline => (pipeline.stages || []).map(stage => stage.id));
+  if (!ids.length) return null;
+  return ids.includes(stageId);
+}
+async function missingStageWarning() {
+  try {
+    const known = stageIsKnown(await crm('GET', '/pipelines'), config.stageId);
+    if (known === false) return 'CRM_STAGE_ID não está entre as etapas atuais do Bwipo. A consulta não gravou nada; a criação só deve ser confirmada depois de corrigir a etapa.';
+  } catch { /* a consulta do Pandapé não depende dessa leitura */ }
+  return null;
+}
+async function createInCrm(c) {
+  if (!c.telefone) return { key: c.key, status: 'sem_telefone', nome: c.nome };
+  const phone = canonicalPhone(c.telefone);
+  const result = { key: c.key, status: 'erro', nome: c.nome, contactId: null, dealId: null };
+  try {
+    const found = items(await crm('GET', '/contacts?phone=' + encodeURIComponent(`+${phone}`)));
+    let contact = found.find(x => samePhone(x.phone, phone));
+    if (!contact) contact = await crm('POST', '/contacts', { name: c.nome, phone });
+    if (!contact?.id) throw new Error('CRM não retornou o ID do contato.');
+    result.contactId = contact.id;
+    const deals = items(await crm('GET', '/deals?contactId=' + encodeURIComponent(contact.id)));
+    if (deals.length) { result.status = 'ja_existe'; result.dealId = deals[0].id; return result; }
+    const deal = await crm('POST', '/deals', { stageId: config.stageId, contactId: contact.id, title: c.nome });
+    if (!deal?.id) throw new Error('CRM não retornou o ID do negócio.');
+    result.dealId = deal.id;
+    const note = `Candidato via Pandapé / Infojobs — vaga: ${c.vaga} (${c.tipo}, processo ${c.idVacancy}, match ${c.idMatch})${c.cep ? ` — CEP: ${c.cep}` : ''}.`;
+    try {
+      await crm('POST', `/deals/${encodeURIComponent(deal.id)}/notes`, { content: note });
+      if (config.tagId) await crm('POST', `/deals/${encodeURIComponent(deal.id)}/tags`, { tagId: config.tagId });
+      result.status = 'criado';
+    } catch (error) { result.status = 'parcial'; result.error = `Negócio criado, mas nota/tag falhou: ${error.message}`; }
+  } catch (error) { result.error = error.message; }
+  return result;
+}
+async function verifyMembership(selected) {
+  const groups = new Map();
+  for (const c of selected) { if (!groups.has(c.idVacancy)) groups.set(c.idVacancy, []); groups.get(c.idVacancy).push(c); }
+  const found = new Set();
+  const cutoff = brTimestamp();
+  for (const [id, group] of groups) {
+    const folder = extractFolders(await pandapeGet(`/Company/Match/Matches/${id}`)).inscritos;
+    if (!folder) continue;
+    const requested = new Set(group.map(c => c.idMatch));
+    for (let page = 1; page <= 80 && requested.size; page++) {
+      const response = await listMatches(id, folder, page, 25, cutoff);
+      for (const c of response.candidates) if (requested.delete(c.idMatch)) found.add(`${id}:${c.idMatch}`);
+      if (!response.candidates.length || page * 25 >= response.total) break;
+    }
+  }
+  return found;
+}
+async function importCandidates(input) {
+  if (!input || typeof input !== 'object' || !Array.isArray(input.keys) || !['CLT', 'ESTAGIO'].includes(input.tipo) || !/^[0-9a-f-]{36}$/i.test(input.requestId || '')) {
+    throw Object.assign(new Error('Seleção inválida.'), { status: 400 });
+  }
+  const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ snapshotId: input.snapshotId, keys: input.keys, tipo: input.tipo, classifications: input.classifications || {} })).digest('hex');
+  if (imports.has(input.requestId)) {
+    const previous = imports.get(input.requestId);
+    if (previous.fingerprint !== fingerprint) throw Object.assign(new Error('Esse identificador já foi usado para outra seleção.'), { status: 409 });
+    return { jobId: previous.job.id, status: previous.job.status };
+  }
+  if (activeImport) throw Object.assign(new Error('Já existe uma importação em andamento.'), { status: 409 });
+  const snapshot = snapshots.get(input.snapshotId);
+  if (!snapshot || snapshot.expiresAt < Date.now()) throw Object.assign(new Error('Consulta expirou. Atualize a lista.'), { status: 409 });
+  const keys = [...new Set(input.keys)];
+  if (!keys.length || keys.length !== input.keys.length || keys.length > config.maxImport) {
+    throw Object.assign(new Error(`Selecione entre 1 e ${config.maxImport} pessoas sem repetições.`), { status: 400 });
+  }
+  const classifications = input.classifications || {};
+  if (typeof classifications !== 'object' || Array.isArray(classifications)) throw Object.assign(new Error('Classificação inválida.'), { status: 400 });
+  const byKey = new Map(snapshot.candidates.map(c => [c.key, c]));
+  const selected = keys.map(key => byKey.get(key));
+  if (selected.some(c => !c)) throw Object.assign(new Error('Candidato fora da consulta.'), { status: 400 });
+  if (selected.some(c => (config.vacancyTypes[c.idVacancy] || classifications[c.idVacancy]) !== input.tipo)) {
+    throw Object.assign(new Error('Classifique todas as vagas selecionadas com o tipo escolhido.'), { status: 400 });
+  }
+  const serverCandidates = selected.map(c => ({ ...c, tipo: input.tipo }));
+  const job = { id: crypto.randomUUID(), status: 'running', total: selected.length, processed: 0, created: 0,
+    existing: 0, partial: 0, skipped: 0, errors: 0, results: [] };
+  imports.set(input.requestId, { job, fingerprint });
+  jobs.set(job.id, job);
+  if (jobs.size > 200) jobs.delete(jobs.keys().next().value);
+  activeImport = true;
+  void (async () => { try {
+    const membership = await verifyMembership(serverCandidates);
+    const seenPhones = new Set();
+    for (const c of serverCandidates) {
+      let result;
+      if (!membership.has(c.key)) result = { key: c.key, nome: c.nome, status: 'nao_inscrito' };
+      else {
+        try {
+          const fresh = extractDetail(await pandapeGet(`/Company/Match/Matches/${c.idVacancy}?idvacancyfolder=${c.folderId}&idMatch=${c.idMatch}`));
+          c.telefone = fresh.telefone; c.cep = fresh.cep;
+          if (c.telefone && seenPhones.has(canonicalPhone(c.telefone))) result = { key: c.key, nome: c.nome, status: 'telefone_repetido' };
+          else {
+            if (c.telefone) seenPhones.add(canonicalPhone(c.telefone));
+            result = await createInCrm(c);
+          }
+        } catch (error) { result = { key: c.key, nome: c.nome, status: 'erro', error: `Detalhes do Pandapé: ${error.message}` }; }
+      }
+      job.results.push(result); job.processed++;
+      if (result.status === 'criado') job.created++;
+      if (result.status === 'ja_existe') job.existing++;
+      if (result.status === 'parcial') job.partial++;
+      if (['sem_telefone', 'nao_inscrito', 'telefone_repetido'].includes(result.status)) job.skipped++;
+      if (result.status === 'erro') job.errors++;
+    }
+    job.status = 'completed';
+  } catch (error) { job.status = 'failed'; job.error = error.message; }
+  finally { activeImport = false; } })();
+  return { jobId: job.id, status: job.status };
+}
+
+function send(res, status, data, headers = {}) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers });
+  res.end(JSON.stringify(data));
+}
+function equalSecret(a, b) { return crypto.timingSafeEqual(crypto.createHash('sha256').update(a).digest(), crypto.createHash('sha256').update(b).digest()); }
+function authorized(req) {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Basic ')) return false;
+  const text = Buffer.from(header.slice(6), 'base64').toString('utf8');
+  const delimiter = text.indexOf(':');
+  if (delimiter < 0) return false;
+  return equalSecret(text.slice(0, delimiter), config.user) && equalSecret(text.slice(delimiter + 1), config.password);
+}
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 128_000) { reject(Object.assign(new Error('Pedido grande demais.'), { status: 413 })); req.destroy(); } });
+    req.on('end', () => { try { resolve(JSON.parse(body)); } catch { reject(Object.assign(new Error('JSON inválido.'), { status: 400 })); } });
+    req.on('error', reject);
+  });
+}
+function sourcePage(res) {
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
+  fs.createReadStream(path.join(__dirname, 'index.html')).pipe(res);
+}
+async function route(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+  if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) return sourcePage(res);
+  if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true });
+  if (!url.pathname.startsWith('/api/')) return send(res, 404, { error: 'Página não encontrada.' });
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0];
+  if (!authorized(req)) {
+    const old = attempts.get(ip) || { n: 0, since: Date.now() };
+    const attempt = Date.now() - old.since > 60_000 ? { n: 1, since: Date.now() } : { n: old.n + 1, since: old.since };
+    attempts.set(ip, attempt);
+    return send(res, attempt.n > 10 ? 429 : 401, { error: 'Acesso não autorizado.' });
+  }
+  attempts.delete(ip);
+  if (req.method === 'POST' && url.pathname === '/api/preview') {
+    const origin = req.headers.origin;
+    if (origin && new URL(origin).host !== req.headers.host) return send(res, 403, { error: 'Origem não permitida.' });
+    return send(res, 202, startPreview());
+  }
+  if (req.method === 'GET' && /^\/api\/preview\/[0-9a-f-]{36}$/i.test(url.pathname)) {
+    const job = previewJobs.get(url.pathname.split('/').pop());
+    return job ? send(res, 200, job) : send(res, 404, { error: 'Consulta não encontrada nesta instância.' });
+  }
+  if (req.method === 'GET' && /^\/api\/import\/[0-9a-f-]{36}$/i.test(url.pathname)) {
+    const job = jobs.get(url.pathname.split('/').pop());
+    return job ? send(res, 200, job) : send(res, 404, { error: 'Lote não encontrado nesta instância.' });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/import') {
+    const origin = req.headers.origin;
+    if (origin && new URL(origin).host !== req.headers.host) return send(res, 403, { error: 'Origem não permitida.' });
+    return send(res, 202, await importCandidates(await readJson(req)));
+  }
+  return send(res, 404, { error: 'Operação não encontrada.' });
+}
+if (require.main === module) {
+  const server = http.createServer((req, res) => {
+    route(req, res).catch(error => {
+      console.error('[painel]', error.message);
+      if (!res.headersSent) send(res, error.status || 502, { error: error.status ? error.message : 'Falha ao consultar Pandapé ou CRM. Verifique os logs do servidor.' });
+    });
+  });
+  server.listen(config.port, '0.0.0.0', () => console.log(`Painel iniciado na porta ${server.address().port}`));
+}
+
+module.exports = {
+  extractVacancies, extractFolders, extractCandidates, extractDetail, decodeEntities,
+  getPandapeCookie, resetLoginState, listMatches, canonicalPhone, samePhone, stageIsKnown
+};
