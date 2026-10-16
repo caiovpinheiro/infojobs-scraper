@@ -475,9 +475,9 @@ function dealCustomFields(c, phone) {
     nome: c.nome,
     cep: c.cep,
     endereco: c.endereco,
-    telefone: phone ? Number(phone) : null,
+    telefone: phone ? String(phone).replace(/^55(?=\d{10,11}$)/, "") : null,
     nascimento: c.nascimento,
-    idade: c.idade,
+    idade: c.idade == null ? null : String(c.idade),
     tipo,
     titulo: c.vaga,
     curso: c.curso,
@@ -485,7 +485,12 @@ function dealCustomFields(c, phone) {
   };
   return Object.entries(values)
     .filter(([, value]) => value !== null && value !== undefined && value !== '')
-    .map(([key, value]) => ({ customFieldId: DEAL_FIELDS[key], value }));
+    .map(([key, value]) => ({ fieldId: DEAL_FIELDS[key], value }));
+}
+async function saveDealFields(dealId, c, phone) {
+  const values = dealCustomFields(c, phone);
+  if (!values.length) return;
+  await crm('PUT', `/deals/${encodeURIComponent(dealId)}/custom-fields`, { values });
 }
 async function createInCrm(c) {
   if (!c.telefone) return { key: c.key, status: 'sem_telefone', nome: c.nome };
@@ -503,12 +508,12 @@ async function createInCrm(c) {
     const deal = await crm('POST', '/deals', {
       stageId: targets.stageId,
       contactId: contact.id,
-      title: c.nome,
-      customFields: dealCustomFields(c, phone)
+      title: c.nome
     });
     if (!deal?.id) throw new Error('CRM não retornou o ID do negócio.');
     result.dealId = deal.id;
     try {
+      await saveDealFields(deal.id, c, phone);
       await crm('POST', `/deals/${encodeURIComponent(deal.id)}/notes`, { content: candidateNote(c, phone) });
       const tagId = targets.tags[c.tipo];
       if (!tagId) throw new Error('Tag do tipo de contrato não encontrada.');
