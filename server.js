@@ -492,6 +492,16 @@ async function saveDealFields(dealId, c, phone) {
   if (!values.length) return;
   await crm('PUT', `/deals/${encodeURIComponent(dealId)}/custom-fields`, { values });
 }
+async function postInternalNote(contactId, content) {
+  let conversation = null;
+  for (let attempt = 0; attempt < 6 && !conversation?.id; attempt++) {
+    if (attempt) await new Promise((resolve) => setTimeout(resolve, 1000));
+    conversation = items(await crm('GET', '/conversations?contactId=' + encodeURIComponent(contactId)))[0];
+  }
+  if (!conversation?.id) throw new Error('Conversa do contato não encontrada para a nota interna.');
+  const sent = await crm('POST', `/conversations/${encodeURIComponent(conversation.id)}/messages`, { content, private: true });
+  if (sent?.message?.isPrivate === false) throw new Error('A nota interna saiu como mensagem.');
+}
 async function createInCrm(c) {
   if (!c.telefone) return { key: c.key, status: 'sem_telefone', nome: c.nome };
   const phone = canonicalPhone(c.telefone);
@@ -514,7 +524,7 @@ async function createInCrm(c) {
     result.dealId = deal.id;
     try {
       await saveDealFields(deal.id, c, phone);
-      await crm('POST', `/deals/${encodeURIComponent(deal.id)}/notes`, { content: candidateNote(c, phone) });
+      await postInternalNote(contact.id, candidateNote(c, phone));
       const tagId = targets.tags[c.tipo];
       if (!tagId) throw new Error('Tag do tipo de contrato não encontrada.');
       await crm('POST', `/deals/${encodeURIComponent(deal.id)}/tags`, { tagId });
