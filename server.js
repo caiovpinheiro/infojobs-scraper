@@ -5,6 +5,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { Pool } = require('pg');
 
 function loadDotEnv(file = path.join(__dirname, '.env')) {
   if (!fs.existsSync(file)) return;
@@ -31,8 +32,70 @@ const config = {
   maxVacancies: bounded(process.env.MAX_VACANCIES, 100, 1, 500),
   maxCandidates: bounded(process.env.MAX_CANDIDATES, 500, 1, 2000),
   maxImport: bounded(process.env.MAX_IMPORT, 100, 1, 500),
-  vacancyTypes: parseTypes(process.env.VACANCY_TYPES_JSON || '{}')
+  vacancyTypes: parseTypes(process.env.VACANCY_TYPES_JSON || '{}'),
+  databaseUrl: process.env.DATABASE_URL || ''
 };
+let pool = null;
+let databaseError = '';
+async function initDatabase() {
+  if (!config.databaseUrl) return;
+  const next = new Pool({ connectionString: config.databaseUrl, max: 5, connectionTimeoutMillis: 8000 });
+  next.on('error', error => console.error('[painel] banco:', error.message));
+  await next.query(`CREATE TABLE IF NOT EXISTS ativacoes (
+    id TEXT PRIMARY KEY,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    nome TEXT NOT NULL,
+    telefone TEXT,
+    cep TEXT,
+    endereco TEXT,
+    nascimento DATE,
+    idade INTEGER,
+    curso TEXT,
+    local_ensino TEXT,
+    vaga TEXT,
+    tipo TEXT,
+    id_vaga TEXT,
+    id_match TEXT,
+    contact_id TEXT,
+    deal_id TEXT,
+    status TEXT NOT NULL
+  )`);
+  await next.query('CREATE INDEX IF NOT EXISTS ativacoes_criado_em_idx ON ativacoes (criado_em DESC)');
+  pool = next;
+}
+function startDatabase() {
+  initDatabase().catch(error => { databaseError = error.message; console.error('[painel] banco:', error.message); });
+}
+async function saveAtivacao(c, result) {
+  if (!pool || !['criado', 'parcial'].includes(result.status)) return;
+  const id = result.dealId || `${c.key}:${result.contactId || 'sem-negocio'}`;
+  await pool.query(`INSERT INTO ativacoes (
+      id, nome, telefone, cep, endereco, nascimento, idade, curso, local_ensino,
+      vaga, tipo, id_vaga, id_match, contact_id, deal_id, status
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+    ON CONFLICT (id) DO NOTHING`, [
+    id, c.nome || '', c.telefone || null, c.cep || null, c.endereco || null,
+    /^\d{4}-\d{2}-\d{2}$/.test(c.nascimento || '') ? c.nascimento : null,
+    Number.isInteger(c.idade) ? c.idade : null, c.curso || null, c.localEnsino || null,
+    c.vaga || null, c.tipo || null, c.idVacancy || null, c.idMatch || null,
+    result.contactId || null, result.dealId || null, result.status
+  ]);
+}
+async function listAtivacoes(page) {
+  const pageSize = 25;
+  const current = Math.max(1, page);
+  if (!pool) return { items: [], total: 0, page: current, pages: 1, configured: Boolean(config.databaseUrl), error: databaseError || (config.databaseUrl ? 'Conectando ao banco…' : '') };
+  const total = Number((await pool.query('SELECT COUNT(*)::int AS total FROM ativacoes')).rows[0].total);
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(current, pages);
+  const rows = await pool.query(`SELECT id, criado_em, nome, telefone, cep, endereco, nascimento, idade, curso,
+      local_ensino, vaga, tipo, id_vaga, id_match, contact_id, deal_id, status
+    FROM ativacoes ORDER BY criado_em DESC LIMIT $1 OFFSET $2`, [pageSize, (safePage - 1) * pageSize]);
+  return {
+    items: rows.rows.map(row => ({ ...row, criadoEm: row.criado_em, localEnsino: row.local_ensino, idVaga: row.id_vaga, idMatch: row.id_match, contactId: row.contact_id, dealId: row.deal_id })),
+    total, page: safePage, pages, configured: true
+  };
+}
 function bounded(value, fallback, min, max) { const n = Number(value); return Number.isInteger(n) && n >= min && n <= max ? n : fallback; }
 function parseTypes(value) {
   let mapping;
@@ -600,6 +663,7 @@ async function importCandidates(input) {
         } catch (error) { result = { key: c.key, nome: c.nome, status: 'erro', error: `Detalhes do Pandapé: ${error.message}` }; }
       }
       job.results.push(result); job.processed++;
+      saveAtivacao(c, result).catch(error => console.error('[painel] ativacao:', error.message));
       if (result.status === 'criado') job.created++;
       if (result.status === 'ja_existe') job.existing++;
       if (result.status === 'parcial') job.partial++;
@@ -664,6 +728,10 @@ async function route(req, res) {
     if (contractType && contractType !== 'CLT' && contractType !== 'ESTAGIO') return send(res, 400, { error: 'Tipo de contrato inválido. Use CLT ou estágio.' });
     return send(res, 202, startPreview(maxVacancies, contractType));
   }
+  if (req.method === 'GET' && url.pathname === '/api/ativacoes') {
+    const page = Number(url.searchParams.get('page'));
+    return send(res, 200, await listAtivacoes(Number.isInteger(page) ? page : 1));
+  }
   if (req.method === 'GET' && /^\/api\/preview\/[0-9a-f-]{36}$/i.test(url.pathname)) {
     const job = previewJobs.get(url.pathname.split('/').pop());
     return job ? send(res, 200, job) : send(res, 404, { error: 'Consulta não encontrada nesta instância.' });
@@ -686,7 +754,10 @@ if (require.main === module) {
       if (!res.headersSent) send(res, error.status || 502, { error: error.status ? error.message : 'Falha ao consultar Pandapé ou CRM. Verifique os logs do servidor.' });
     });
   });
-  server.listen(config.port, '0.0.0.0', () => console.log(`Painel iniciado na porta ${server.address().port}`));
+  server.listen(config.port, '0.0.0.0', () => {
+    console.log(`Painel iniciado na porta ${server.address().port}`);
+    startDatabase();
+  });
 }
 
 module.exports = {

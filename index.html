@@ -47,6 +47,9 @@
     .split { display:flex; flex-wrap:wrap; gap:15px; align-items:center; } .split .muted { max-width:800px; }
     .pager { display:flex; gap:8px; align-items:center; justify-content:flex-end; margin-top:12px; }
     .pager button:disabled { opacity:.45; }
+    .tabs { display:flex; gap:8px; margin:0 0 16px; }
+    .tab { border:1px solid #d5e1eb; background:#fff; color:#3d5870; border-radius:999px; padding:8px 14px; font-weight:750; }
+    .tab.on { background:#153f68; color:#fff; border-color:#153f68; }
     .progress { height:7px; background:#e3eaf1; border-radius:10px; overflow:hidden; margin-top:14px; }
     .progress > span { display:block; height:100%; background:#2084b5; width:0; transition:width .25s; }
     dialog { border:0; border-radius:17px; max-width:min(500px,calc(100vw - 28px)); width:100%; padding:26px; box-shadow:0 24px 80px rgba(16,38,60,.28); }
@@ -57,6 +60,8 @@
 <body>
 <main class="shell">
   <header><div><div class="eyebrow">DNA Work · Operação</div><h1>Pandapé → Bwipo CRM</h1><p class="muted">Veja os inscritos e suas vagas. Você decide quem entra no CRM.</p></div><span id="badge" class="badge">Aguardando acesso</span></header>
+  <nav class="tabs" aria-label="Seções"><button type="button" id="tabConsulta" class="tab on">Consulta</button><button type="button" id="tabAtivacoes" class="tab">Ativações</button></nav>
+  <div id="paneConsulta">
 
   <section class="card" aria-labelledby="accessTitle">
     <h2 id="accessTitle">1. Acessar e consultar</h2>
@@ -84,15 +89,23 @@
     <div id="jobStatus" class="status" role="status" aria-live="polite"></div><div id="progress" class="progress hidden"><span id="progressBar"></span></div>
     <div id="results" class="table-wrap hidden"><table><thead><tr><th>Pessoa</th><th>Resultado</th><th>Contato</th><th>Negócio</th></tr></thead><tbody id="resultRows"></tbody></table></div>
   </section>
-</main>
+  </div>
+  <section id="paneAtivacoes" class="card hidden" aria-labelledby="activationsTitle">
+    <div class="row wrap"><div><h2 id="activationsTitle">Pessoas ativadas</h2><p class="muted">Quem entrou no CRM nesta operação, da mais recente para a mais antiga.</p></div><button id="activationsRefresh" class="minor" type="button">Atualizar</button></div>
+    <div id="activationsStatus" class="status" role="status"></div>
+    <div class="table-wrap"><table><thead><tr><th>Quando</th><th>Nome</th><th>Telefone</th><th>CEP</th><th>Vaga</th><th>Tipo</th><th>Negócio</th></tr></thead><tbody id="activationRows"></tbody></table></div>
+    <div class="pager"><button id="activationPrev" class="minor" type="button">Anterior</button><span id="activationLabel" class="muted"></span><button id="activationNext" class="minor" type="button">Próxima</button></div>
+  </section>
 
 <dialog id="confirmDialog" aria-labelledby="confirmTitle"><h2 id="confirmTitle">Confirmar criação no CRM</h2><p id="confirmText"></p><p class="muted">Antes de criar, o servidor verifica novamente se cada pessoa ainda está em Inscritos. Esta ação não move ninguém no Pandapé e não envia mensagens.</p><div class="row"><button id="cancelBtn" class="btn alt">Cancelar</button><button id="confirmBtn" class="btn danger">Criar no CRM</button></div></dialog>
+</main>
 
 <script>
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const e = Object.fromEntries(['username','password','searchType','vacancyLimit','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selectPageBtn','selectAllBtn','pageCheck','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn','pagePrev','pageNext','pageLabel'].map(id => [id,$(id)]));
+  const e = Object.fromEntries(['username','password','searchType','vacancyLimit','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selectPageBtn','selectAllBtn','pageCheck','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn','pagePrev','pageNext','pageLabel','tabConsulta','tabAtivacoes','paneConsulta','paneAtivacoes','activationsRefresh','activationsStatus','activationRows','activationPrev','activationNext','activationLabel'].map(id => [id,$(id)]));
+  let activationPage = 1;
   const PAGE_SIZE = 25;
   let snapshot = null;
   let classification = {};
@@ -281,6 +294,46 @@
     e.confirmDialog.showModal();
   });
   e.cancelBtn.addEventListener('click',()=>e.confirmDialog.close()); e.confirmBtn.addEventListener('click',create);
+  function showTab(name) {
+    const activations = name === 'ativacoes';
+    e.paneConsulta.classList.toggle('hidden', activations);
+    e.paneAtivacoes.classList.toggle('hidden', !activations);
+    e.tabConsulta.classList.toggle('on', !activations);
+    e.tabAtivacoes.classList.toggle('on', activations);
+    if (activations) loadActivations();
+  }
+  async function loadActivations() {
+    message(e.activationsStatus, 'Carregando ativações…');
+    try {
+      const data = await api('/api/ativacoes?page=' + activationPage);
+      activationPage = data.page || 1;
+      e.activationRows.replaceChildren();
+      if (!data.configured) message(e.activationsStatus, 'Banco não configurado. Defina DATABASE_URL no servidor.', true);
+      else if (data.error) message(e.activationsStatus, data.error, true);
+      else if (!data.items.length) message(e.activationsStatus, 'Nenhuma pessoa ativada ainda.');
+      else message(e.activationsStatus, data.total + ' pessoa(s) ativada(s).');
+      for (const item of data.items || []) {
+        const row = document.createElement('tr');
+        const when = item.criadoEm ? new Date(item.criadoEm).toLocaleString('pt-BR') : '—';
+        cell(row, when); cell(row, item.nome); cell(row, item.telefone || '—'); cell(row, item.cep || '—'); cell(row, item.vaga || '—');
+        const typeCell = document.createElement('td');
+        const pill = document.createElement('span');
+        pill.className = 'pill' + (item.tipo === 'ESTAGIO' ? ' stage' : '');
+        pill.textContent = item.tipo === 'ESTAGIO' ? 'Estágio' : (item.tipo || '—');
+        typeCell.append(pill); row.append(typeCell);
+        cell(row, item.dealId || '—');
+        e.activationRows.append(row);
+      }
+      e.activationLabel.textContent = data.total ? `Página ${data.page} de ${data.pages}` : '';
+      e.activationPrev.disabled = activationPage <= 1;
+      e.activationNext.disabled = !data.pages || activationPage >= data.pages;
+    } catch (error) { message(e.activationsStatus, error.message, true); }
+  }
+  e.tabConsulta.addEventListener('click', () => showTab('consulta'));
+  e.tabAtivacoes.addEventListener('click', () => showTab('ativacoes'));
+  e.activationsRefresh.addEventListener('click', loadActivations);
+  e.activationPrev.addEventListener('click', () => { activationPage -= 1; loadActivations(); });
+  e.activationNext.addEventListener('click', () => { activationPage += 1; loadActivations(); });
 })();
 </script>
 </body>
