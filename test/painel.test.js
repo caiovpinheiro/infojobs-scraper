@@ -12,6 +12,9 @@ const TOKEN = 'login-test-token';
 const COOKIE = 'ats-webui=sessao-de-teste';
 const calls = [];
 let mode = 'ok';
+let cookieBehavior = 'valid';
+let deployed = false;
+let healthDown = 0;
 let server;
 let base;
 let app;
@@ -48,8 +51,24 @@ before(async () => {
       }
       if (url.pathname === '/cookie') {
         const force = url.searchParams.get('force');
+        const expired = cookieBehavior === 'expired-unless-force' ? !force : cookieBehavior === 'expired-until-deploy' ? !deployed : false;
+        const cookie = deployed ? 'ats-webui=sessao-pos-deploy' : force ? 'ats-webui=sessao-renovada' : COOKIE;
+        const expiresAt = new Date(Date.now() + (expired ? -60_000 : 2 * 60 * 60 * 1000)).toISOString();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ cookie: force ? 'ats-webui=sessao-renovada' : COOKIE, expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() }));
+        res.end(JSON.stringify({ cookie, expiresAt }));
+        return;
+      }
+      if (url.pathname === '/health') {
+        if (healthDown > 0) { healthDown -= 1; res.writeHead(503); res.end('down'); return; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      if (url.pathname === '/deploy' && req.method === 'POST') {
+        deployed = true;
+        healthDown = 2;
+        res.writeHead(202, { 'Content-Type': 'text/plain' });
+        res.end('queued');
         return;
       }
       if (url.pathname === '/pipelines') {
@@ -95,6 +114,9 @@ before(async () => {
   process.env.APP_PASSWORD = 'senha-teste';
   process.env.PANDAPE_LOGIN_URL = base;
   process.env.PANDAPE_LOGIN_TOKEN = TOKEN;
+  process.env.PANDAPE_LOGIN_DEPLOY_URL = `${base}/deploy`;
+  process.env.PANDAPE_LOGIN_DEPLOY_POLL_MS = '15';
+  process.env.PANDAPE_LOGIN_DEPLOY_TIMEOUT_MS = '5000';
   process.env.PANDAPE_BASE_URL = base;
   process.env.CRM_BASE_URL = base;
   process.env.CRM_API_KEY = 'crm-test';
@@ -144,9 +166,31 @@ test('GET /cookie usa X-Auth-Token, respeita expiresAt e renova uma vez', async 
   calls.length = 0;
   mode = 'always-redirect';
   await assert.rejects(() => app.listMatches('10', '77', 1, 25, '15/10/2026 12:00:00'), /Sessão do Pandapé/);
-  assert.equal(calls.filter(call => call.path === '/cookie' && call.search === '?force=1').length, 1);
-  assert.equal(calls.filter(call => call.path === '/Company/Match/ListMatches').length, 2);
+  assert.equal(calls.filter(call => call.path === '/deploy').length, 1);
   mode = 'ok';
+});
+
+test('cookie vencido renova com force e só implanta se a sessão continuar vencida', async () => {
+  calls.length = 0;
+  app.resetLoginState();
+  deployed = false;
+  healthDown = 0;
+  cookieBehavior = 'expired-unless-force';
+  const renewed = await app.getPandapeCookie(false);
+  assert.equal(renewed, 'ats-webui=sessao-renovada');
+  assert.equal(calls.filter(call => call.path === '/deploy').length, 0);
+  assert.equal(calls.filter(call => call.path === '/cookie' && call.search === '?force=1').length, 1);
+
+  calls.length = 0;
+  app.resetLoginState();
+  deployed = false;
+  healthDown = 0;
+  cookieBehavior = 'expired-until-deploy';
+  const afterDeploy = await app.getPandapeCookie(false);
+  assert.equal(afterDeploy, 'ats-webui=sessao-pos-deploy');
+  assert.equal(calls.filter(call => call.path === '/deploy').length, 1);
+  cookieBehavior = 'valid';
+  deployed = false;
 });
 
 test('a consulta lista e conta inscritos sem criar no CRM', async () => {
