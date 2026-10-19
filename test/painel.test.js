@@ -15,6 +15,8 @@ let mode = 'ok';
 let cookieBehavior = 'valid';
 let deployed = false;
 let healthDown = 0;
+let crmMode = false;
+let conversationMisses = 0;
 let server;
 let base;
 let app;
@@ -44,6 +46,26 @@ before(async () => {
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
       calls.push({ method: req.method, path: url.pathname, search: url.search, auth: req.headers['x-auth-token'] || '', cookie: req.headers.cookie || '', body });
+      if (crmMode) {
+        const json = data => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
+        if (url.pathname === '/pipelines') return json([{ id: 'pipe', name: 'Candidaturas', stages: [{ id: 'etapa-ativacoes', name: 'Ativações' }] }]);
+        if (url.pathname === '/tags' && req.method === 'GET') return json({ items: [] });
+        if (url.pathname === '/tags' && req.method === 'POST') return json({ id: 'tag-' + JSON.parse(body).name, name: JSON.parse(body).name });
+        if (url.pathname === '/contacts' && req.method === 'GET') return json({ items: [] });
+        if (url.pathname === '/contacts' && req.method === 'POST') return json({ id: 'contact-1', name: 'Pessoa Teste', phone: JSON.parse(body).phone });
+        if (url.pathname === '/deals' && req.method === 'GET') return json({ items: [] });
+        if (url.pathname === '/deals' && req.method === 'POST') return json({ id: 'deal-1' });
+        if (url.pathname === '/deals/deal-1/custom-fields' && req.method === 'PUT') return json({ ok: true });
+        if (url.pathname === '/deals/deal-1/tags' && req.method === 'POST') return json({ ok: true });
+        if (url.pathname === '/conversations' && req.method === 'GET') {
+          if (conversationMisses > 0) { conversationMisses -= 1; return json({ items: [] }); }
+          return json({ items: [{ id: 'conv-1' }] });
+        }
+        if (url.pathname === '/conversations/conv-1/messages' && req.method === 'POST') {
+          const payload = JSON.parse(body);
+          return json({ id: 'msg-1', isPrivate: payload.isPrivate === true || payload.private === true, content: payload.content });
+        }
+      }
       if (req.method === 'POST' && (url.pathname.startsWith('/contacts') || url.pathname.startsWith('/deals'))) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ message: 'criação não permitida neste teste' }));
@@ -258,6 +280,45 @@ test('a consulta lista e conta inscritos sem criar no CRM', async () => {
     child.kill('SIGTERM');
     await once(child, 'exit');
   }
+});
+
+test('criação grava os campos, a tag e a nota interna da conversa', async () => {
+  calls.length = 0;
+  crmMode = true;
+  conversationMisses = 3;
+  process.env.CRM_NOTE_POLL_MS = '15';
+  process.env.CRM_NOTE_WAIT_MS = '5000';
+  app.resetCrmTargets();
+  const result = await app.createInCrm({
+    key: '10:100', nome: 'Pessoa Teste', telefone: '11988887777', cep: '01310-100',
+    endereco: 'Rua A, 10', nascimento: '2000-01-02', idade: 25, curso: 'Administração',
+    localEnsino: 'Escola X', vaga: 'Estágio em RH', tipo: 'ESTAGIO', idVacancy: '10', idMatch: '100'
+  });
+  assert.equal(result.status, 'criado', result.error);
+  const fields = JSON.parse(calls.find(call => call.method === 'PUT' && call.path.endsWith('/custom-fields')).body);
+  const byId = Object.fromEntries(fields.values.map(item => [item.fieldId, item.value]));
+  assert.equal(byId[app.DEAL_FIELDS.nome], 'Pessoa Teste');
+  assert.equal(byId[app.DEAL_FIELDS.telefone], '11988887777');
+  assert.equal(byId[app.DEAL_FIELDS.cep], '01310-100');
+  assert.equal(byId[app.DEAL_FIELDS.endereco], 'Rua A, 10');
+  assert.equal(byId[app.DEAL_FIELDS.nascimento], '2000-01-02');
+  assert.equal(byId[app.DEAL_FIELDS.idade], '25');
+  assert.equal(byId[app.DEAL_FIELDS.tipo], 'Estágio');
+  assert.equal(byId[app.DEAL_FIELDS.titulo], 'Estágio em RH');
+  assert.equal(byId[app.DEAL_FIELDS.curso], 'Administração');
+  assert.equal(byId[app.DEAL_FIELDS.localEnsino], 'Escola X');
+  const tag = calls.find(call => call.method === 'POST' && call.path === '/deals/deal-1/tags');
+  assert.equal(JSON.parse(tag.body).tagId, 'tag-INFOJOBS - ESTÁGIO');
+  const noteCall = calls.find(call => call.method === 'POST' && call.path === '/conversations/conv-1/messages');
+  const note = JSON.parse(noteCall.body);
+  assert.equal(note.private, true);
+  assert.equal(note.isPrivate, true);
+  assert.match(note.content, /Candidato InfoJobs/);
+  assert.match(note.content, /Estágio em RH/);
+  assert.match(note.content, /01310-100/);
+  assert.ok(calls.indexOf(tag) < calls.indexOf(noteCall));
+  assert.equal(calls.filter(call => call.path === '/conversations').length, 4);
+  crmMode = false;
 });
 
 test('a página e o servidor não carregam segredo nem movem candidato', () => {

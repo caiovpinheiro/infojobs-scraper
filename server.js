@@ -569,6 +569,7 @@ async function ensureTag(tags, name) {
   tags.push(created);
   return created.id;
 }
+function resetCrmTargets() { crmTargets = null; }
 async function loadCrmTargets() {
   if (crmTargets) return crmTargets;
   const pipelines = await crm('GET', '/pipelines');
@@ -626,15 +627,26 @@ async function saveDealFields(dealId, c, phone) {
   if (!values.length) return;
   await crm('PUT', `/deals/${encodeURIComponent(dealId)}/custom-fields`, { values });
 }
+function noteWaitMs() {
+  const n = Number(process.env.CRM_NOTE_WAIT_MS);
+  return Number.isFinite(n) && n >= 1000 ? n : 45000;
+}
+function notePollMs() {
+  const n = Number(process.env.CRM_NOTE_POLL_MS);
+  return Number.isFinite(n) && n >= 10 ? n : 2000;
+}
 async function postInternalNote(contactId, content) {
+  const deadline = Date.now() + noteWaitMs();
   let conversation = null;
-  for (let attempt = 0; attempt < 6 && !conversation?.id; attempt++) {
-    if (attempt) await new Promise((resolve) => setTimeout(resolve, 1000));
+  while (!conversation?.id) {
     conversation = items(await crm('GET', '/conversations?contactId=' + encodeURIComponent(contactId)))[0];
+    if (conversation?.id || Date.now() >= deadline) break;
+    await sleep(notePollMs());
   }
   if (!conversation?.id) throw new Error('Conversa do contato não encontrada para a nota interna.');
-  const sent = await crm('POST', `/conversations/${encodeURIComponent(conversation.id)}/messages`, { content, private: true });
-  if (sent?.message?.isPrivate === false) throw new Error('A nota interna saiu como mensagem.');
+  const sent = await crm('POST', `/conversations/${encodeURIComponent(conversation.id)}/messages`, { content, private: true, isPrivate: true });
+  const message = sent?.message && typeof sent.message === 'object' ? sent.message : sent;
+  if (message?.isPrivate === false || message?.private === false) throw new Error('A nota interna saiu como mensagem.');
 }
 async function createInCrm(c) {
   if (!c.telefone) return { key: c.key, status: 'sem_telefone', nome: c.nome };
@@ -658,12 +670,18 @@ async function createInCrm(c) {
     result.dealId = deal.id;
     try {
       await saveDealFields(deal.id, c, phone);
-      await postInternalNote(contact.id, candidateNote(c, phone));
       const tagId = targets.tags[c.tipo];
       if (!tagId) throw new Error('Tag do tipo de contrato não encontrada.');
       await crm('POST', `/deals/${encodeURIComponent(deal.id)}/tags`, { tagId });
+    } catch (error) {
+      result.status = 'parcial';
+      result.error = `Negócio criado, mas campos ou tag falharam: ${error.message}`;
+      return result;
+    }
+    try {
+      await postInternalNote(contact.id, candidateNote(c, phone));
       result.status = 'criado';
-    } catch (error) { result.status = 'parcial'; result.error = `Negócio criado, mas nota/tag falhou: ${error.message}`; }
+    } catch (error) { result.status = 'parcial'; result.error = `Negócio criado, mas a nota interna falhou: ${error.message}`; }
   } catch (error) { result.error = error.message; }
   return result;
 }
@@ -833,5 +851,6 @@ if (require.main === module) {
 
 module.exports = {
   extractVacancies, extractVacancyCards, extractFolders, extractContractType, extractCandidates, extractDetail, decodeEntities,
-  getPandapeCookie, resetLoginState, listMatches, canonicalPhone, samePhone, stageIsKnown
+  getPandapeCookie, resetLoginState, listMatches, canonicalPhone, samePhone, stageIsKnown,
+  createInCrm, resetCrmTargets, DEAL_FIELDS
 };
