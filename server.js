@@ -25,6 +25,7 @@ const config = {
   cookie: process.env.PANDAPE_COOKIE || '',
   loginUrl: (process.env.PANDAPE_LOGIN_URL || '').replace(/\/+$/, ''),
   loginToken: process.env.PANDAPE_LOGIN_TOKEN || '',
+  deployUrl: process.env.PANDAPE_LOGIN_DEPLOY_URL || '',
   pandapeBase: (process.env.PANDAPE_BASE_URL || 'https://pandape.infojobs.com.br').replace(/\/+$/, ''),
   crmBase: (process.env.CRM_BASE_URL || 'https://integrations.bwipo.com/api').replace(/\/+$/, ''),
   crmKey: process.env.CRM_API_KEY || '',
@@ -120,6 +121,7 @@ let activeImport = false;
 let loginCookie = null;
 let loginCookieExpiresAt = 0;
 let loginQueue = Promise.resolve();
+let deployInFlight = null;
 const COOKIE_SKEW_MS = 60 * 1000;
 
 function decodeEntities(value) {
@@ -261,18 +263,82 @@ async function fetchLoginCookie(force) {
   loginCookieExpiresAt = expiry;
   return loginCookie;
 }
+function isStaleCookie(error) {
+  return /Cookie ou validade inválida/.test(error.message || '');
+}
+function deployPollMs() {
+  const n = Number(process.env.PANDAPE_LOGIN_DEPLOY_POLL_MS);
+  return Number.isFinite(n) && n >= 10 ? n : 3000;
+}
+function deployTimeoutMs() {
+  const n = Number(process.env.PANDAPE_LOGIN_DEPLOY_TIMEOUT_MS);
+  return Number.isFinite(n) && n >= 1000 ? n : 240000;
+}
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+async function triggerDeploy() {
+  const send = method => fetch(config.deployUrl, { method, redirect: 'manual', signal: AbortSignal.timeout(30000) });
+  let response;
+  try { response = await send('POST'); }
+  catch { throw new Error('Não foi possível acionar o deploy do pandape-login.'); }
+  if (response.status === 404 || response.status === 405) {
+    try { response = await send('GET'); }
+    catch { throw new Error('Não foi possível acionar o deploy do pandape-login.'); }
+  }
+  if (response.status >= 400) throw new Error(`Gatilho de deploy do pandape-login retornou HTTP ${response.status}.`);
+}
+async function healthUp() {
+  try {
+    const response = await fetch(`${config.loginUrl}/health`, { redirect: 'manual', signal: AbortSignal.timeout(10000) });
+    return response.ok;
+  } catch { return false; }
+}
+async function waitForRestart() {
+  const deadline = Date.now() + deployTimeoutMs();
+  let sawDown = false;
+  while (Date.now() < deadline) {
+    const up = await healthUp();
+    if (!up) sawDown = true;
+    else if (sawDown) return;
+    await sleep(deployPollMs());
+  }
+  throw new Error('O pandape-login não voltou após o deploy.');
+}
+async function recoverByDeploy() {
+  if (!config.deployUrl) throw new Error('Cookie do Pandapé vencido e não há gatilho de deploy configurado.');
+  if (!deployInFlight) {
+    deployInFlight = (async () => {
+      await triggerDeploy();
+      await waitForRestart();
+      return fetchLoginCookie(true);
+    })().finally(() => { deployInFlight = null; });
+  }
+  return deployInFlight;
+}
 async function getPandapeCookie(force = false) {
   if (!config.loginUrl) return config.cookie;
   return enqueueLogin(async () => {
     if (!force && cookieFresh()) return loginCookie;
     if (force) { loginCookie = null; loginCookieExpiresAt = 0; }
-    return fetchLoginCookie(force);
+    try {
+      return await fetchLoginCookie(force);
+    } catch (error) {
+      if (!force && isStaleCookie(error)) {
+        try { return await fetchLoginCookie(true); }
+        catch (second) {
+          if (!config.deployUrl || !isStaleCookie(second)) throw second;
+          return recoverByDeploy();
+        }
+      }
+      if (force && config.deployUrl && isStaleCookie(error)) return recoverByDeploy();
+      throw error;
+    }
   });
 }
 function resetLoginState() {
   loginCookie = null;
   loginCookieExpiresAt = 0;
   loginQueue = Promise.resolve();
+  deployInFlight = null;
 }
 async function pandapeHeaders(form = false, force = false) {
   return { Cookie: await getPandapeCookie(force), 'X-Requested-With': 'XMLHttpRequest',
@@ -319,7 +385,12 @@ async function pandapeRequest(relativePath, params) {
   try { return await makeRequest(false); }
   catch (error) {
     if (error.code !== 'PANDAPE_AUTH' || !config.loginUrl) throw error;
-    return makeRequest(true);
+    try { return await makeRequest(true); }
+    catch (second) {
+      if (second.code !== 'PANDAPE_AUTH' || !config.deployUrl) throw second;
+      await recoverByDeploy();
+      return makeRequest(false);
+    }
   }
 }
 function brTimestamp() {

@@ -35,6 +35,7 @@ Abra `http://localhost:3000`. No Easypanel, informe as variáveis no painel do s
 | --- | --- |
 | `APP_USER`, `APP_PASSWORD` | Credenciais do operador, enviadas apenas à API da própria aplicação por HTTPS |
 | `PANDAPE_LOGIN_URL`, `PANDAPE_LOGIN_TOKEN` | URL do serviço `pandape-login` e seu `AUTH_TOKEN`; o painel chama `GET /cookie` com o cabeçalho `X-Auth-Token` |
+| `PANDAPE_LOGIN_DEPLOY_URL` | Opcional. Webhook de deploy do EasyPanel desse serviço, usado só quando a renovação do cookie falha |
 | `PANDAPE_COOKIE` | Alternativa manual às duas variáveis acima; cookie completo da sessão autenticada |
 | `CRM_BASE_URL`, `CRM_API_KEY` | API do Bwipo CRM e respectiva chave |
 | `CRM_STAGE_ID` | Etapa na qual novos negócios serão criados |
@@ -46,7 +47,7 @@ O export do workflow comprova somente **nome/ID da vaga, nome/ID da pessoa, tele
 
 ### Serviço `pandape-login`
 
-O Dockerfile fornecido inicia um serviço Playwright que faz login no Pandapé e, se houver verificação em duas etapas, busca o código no Titan. Ele guarda em memória o cookie `ats-webui` com a validade e o devolve em `GET /cookie`. Essa rota exige `X-Auth-Token`; `GET /health` é público. O painel consulta o serviço no servidor, reutiliza o cookie enquanto `expiresAt` estiver no futuro (com margem de um minuto) e, se o Pandapé redirecionar para o login, chama `/cookie?force=1` e tenta a requisição uma vez mais. A primeira consulta pode demorar enquanto o serviço autentica.
+O Dockerfile fornecido inicia um serviço Playwright que faz login no Pandapé e, se houver verificação em duas etapas, busca o código no Titan. Ele guarda em memória o cookie `ats-webui` com a validade e o devolve em `GET /cookie`. Essa rota exige `X-Auth-Token`; `GET /health` é público. O painel consulta o serviço no servidor e reutiliza o cookie enquanto `expiresAt` estiver no futuro (com margem de um minuto). Quando o prazo passa, pede `GET /cookie` de novo. Se a resposta vier vencida, chama `/cookie?force=1` uma vez. Se ainda assim a sessão não servir, e `PANDAPE_LOGIN_DEPLOY_URL` estiver definida, dispara esse webhook de deploy, espera `/health` cair e voltar, e então lê o cookie novo. A primeira consulta pode demorar enquanto o serviço autentica ou reinicia.
 
 Deixe `PANDAPE_EMAIL`, `PANDAPE_PASSWORD`, `TITAN_EMAIL`, `TITAN_PASSWORD` e `AUTH_TOKEN` **somente no serviço `pandape-login`**. No painel configure a URL e o token correspondente, sem copiar as senhas nem colocar segredos no HTML ou no GitHub. O workflow n8n fornecido tinha um nó `Cookie Pandapé` com valor fixo; não havia nele chamada a esse serviço.
 
