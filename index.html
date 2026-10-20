@@ -80,7 +80,7 @@
   </section>
 
   <section id="peopleSection" class="card hidden" aria-labelledby="peopleTitle">
-    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">Marque pessoas, a página inteira ou todos do tipo filtrado. O lote respeita o máximo do servidor.</p></div><button id="clearBtn" class="minor">Limpar seleção</button></div>
+    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">Quem já foi ativado aparece na lista e fica de fora. Selecionar todos marca só as pessoas novas. A criação segue o ritmo do CRM.</p></div><button id="clearBtn" class="minor">Limpar seleção</button></div>
     <div class="controls"><label>Tipo de vaga<select id="typeFilter"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade para selecionar<input id="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex.: 20"></label><button id="selectFirstBtn" class="btn alt" disabled>Selecionar primeiras</button><button id="selectPageBtn" class="btn alt" disabled>Selecionar página</button><button id="selectAllBtn" class="btn alt" disabled>Selecionar todos</button></div>
     <div class="split"><p id="selection" class="muted"></p><p id="tableCount" class="muted"></p></div>
     <div class="table-wrap"><table><thead><tr><th><input id="pageCheck" type="checkbox" aria-label="Selecionar as pessoas desta página"></th><th>Candidato</th><th>Telefone</th><th>CEP</th><th>Vaga</th><th>Tipo</th></tr></thead><tbody id="candidateRows"></tbody></table></div>
@@ -151,7 +151,7 @@
     return snapshot.candidates.filter(c=>!type||typeOf(c)===type);
   }
   function selectablePeople() {
-    const visible=filteredPeople().filter(c=>typeOf(c));
+    const visible=filteredPeople().filter(c=>typeOf(c)&&!c.ativado);
     const types=[...new Set(visible.map(typeOf))];
     if (types.length<=1) return visible;
     const preferred=types.includes(e.typeFilter.value)?e.typeFilter.value:types[0];
@@ -169,15 +169,15 @@
     if (!visible.length) { const row=document.createElement('tr'),td=cell(row,'Nenhuma pessoa com esse filtro.'); td.colSpan=6; td.className='empty'; e.candidateRows.append(row); }
     for (const c of pageItems) {
       const row=document.createElement('tr'), td=document.createElement('td'), box=document.createElement('input');
-      box.type='checkbox'; box.checked=selected.has(c.key); box.disabled=!typeOf(c)||busy; box.setAttribute('aria-label','Selecionar '+c.nome);
+      box.type='checkbox'; box.checked=selected.has(c.key)&&!c.ativado; box.disabled=!typeOf(c)||c.ativado||busy; box.setAttribute('aria-label','Selecionar '+c.nome);
       box.addEventListener('change',()=>{ if(box.checked) selected.add(c.key); else selected.delete(c.key); updateSelection(); });
       td.append(box); row.append(td);
-      const name=cell(row,c.nome),small=document.createElement('div'); small.className='subline'; small.textContent='Match '+c.idMatch+(c.detailError?' · detalhes indisponíveis':''); name.append(small);
+      const name=cell(row,c.nome),small=document.createElement('div'); small.className='subline'; small.textContent='Match '+c.idMatch+(c.ativado?' · Já ativado':'')+(c.detailError?' · detalhes indisponíveis':''); name.append(small);
       cell(row,c.telefone||'Não encontrado'); cell(row,c.cep||'—'); cell(row,c.vaga);
       const typeCell=document.createElement('td'),pill=document.createElement('span'),category=typeOf(c); pill.className='pill'+(category==='ESTAGIO'?' stage':!category?' unknown':''); pill.textContent=category==='ESTAGIO'?'Estágio':category||'Classificar vaga'; typeCell.append(pill); row.append(typeCell);
       e.candidateRows.append(row);
     }
-    const pageKeys=pageItems.filter(c=>typeOf(c)).map(c=>c.key);
+    const pageKeys=pageItems.filter(c=>typeOf(c)&&!c.ativado).map(c=>c.key);
     const marked=pageKeys.filter(key=>selected.has(key)).length;
     e.pageCheck.checked=pageKeys.length>0&&marked===pageKeys.length;
     e.pageCheck.indeterminate=marked>0&&marked<pageKeys.length;
@@ -191,14 +191,15 @@
   function updateSelection() {
     if (!snapshot) return;
     const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))).filter(Boolean))];
-    const n=Number(e.quantity.value), available=snapshot.candidates.filter(c=>typeOf(c)===e.typeFilter.value).length;
+    const n=Number(e.quantity.value), available=snapshot.candidates.filter(c=>typeOf(c)===e.typeFilter.value&&!c.ativado).length;
+    const already=filteredPeople().filter(c=>c.ativado).length;
     const canSelect=selectablePeople().length>0&&!busy;
     e.selectPageBtn.disabled=!canSelect;
     e.selectAllBtn.disabled=!canSelect;
-    e.selectFirstBtn.disabled=busy||!e.typeFilter.value||!Number.isInteger(n)||n<1||n>available||n>snapshot.maxImport;
-    e.reviewBtn.disabled=busy||selected.size===0||selected.size>snapshot.maxImport||types.length!==1;
-    e.selection.textContent=`${selected.size} selecionado(s) · máximo ${snapshot.maxImport} por lote`+(types.length>1?' · selecione apenas uma categoria por lote':'')+'.';
-    e.quantity.max=String(Math.min(available,snapshot.maxImport));
+    e.selectFirstBtn.disabled=busy||!e.typeFilter.value||!Number.isInteger(n)||n<1||n>available;
+    e.reviewBtn.disabled=busy||selected.size===0||types.length!==1;
+    e.selection.textContent=`${selected.size} selecionado(s)`+(already?` · ${already} já ativado(s) ficam de fora`:'')+(types.length>1?' · selecione apenas uma categoria por lote':'')+'.';
+    e.quantity.max=String(available);
   }
   async function load() {
     if (busy) return; busy=true; e.loadBtn.disabled=true; e.refreshBtn.disabled=true;
@@ -270,7 +271,7 @@
     const start=(peoplePage-1)*PAGE_SIZE;
     for (const c of visible.slice(start, start+PAGE_SIZE)) {
       if (!typeOf(c)) continue;
-      if (mark) { if (selected.size<snapshot.maxImport) selected.add(c.key); }
+      if (mark && !c.ativado) selected.add(c.key);
       else selected.delete(c.key);
     }
     renderPeople();
@@ -279,13 +280,13 @@
   e.selectPageBtn.addEventListener('click',()=>setPageSelection(true));
   e.selectAllBtn.addEventListener('click',()=>{
     const pool=selectablePeople();
-    selected=new Set(pool.slice(0, snapshot.maxImport).map(c=>c.key));
+    selected=new Set(pool.map(c=>c.key));
     renderPeople();
   });
   e.selectFirstBtn.addEventListener('click',()=>{
     const n=Number(e.quantity.value), type=e.typeFilter.value;
     if(!type||!Number.isInteger(n)||n<1) return;
-    selected=new Set(snapshot.candidates.filter(c=>typeOf(c)===type).slice(0,n).map(c=>c.key)); renderPeople();
+    selected=new Set(snapshot.candidates.filter(c=>typeOf(c)===type&&!c.ativado).slice(0,n).map(c=>c.key)); renderPeople();
   });
   e.reviewBtn.addEventListener('click',()=>{
     const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))))];

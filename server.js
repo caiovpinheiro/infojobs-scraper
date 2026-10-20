@@ -82,6 +82,22 @@ async function saveAtivacao(c, result) {
     result.contactId || null, result.dealId || null, result.status
   ]);
 }
+async function activatedKeys(candidates) {
+  if (!pool || !candidates.length) return new Set();
+  const phones = [...new Set(candidates.map(c => canonicalPhone(c.telefone)).filter(Boolean))];
+  const vacancies = [...new Set(candidates.map(c => c.idVacancy).filter(Boolean))];
+  const matches = [...new Set(candidates.map(c => c.idMatch).filter(Boolean))];
+  const result = await pool.query(`SELECT telefone, id_vaga, id_match FROM ativacoes
+    WHERE status IN ('criado', 'parcial')
+      AND (telefone = ANY($1::text[]) OR (id_vaga = ANY($2::text[]) AND id_match = ANY($3::text[])))`, [phones, vacancies, matches]);
+  const phoneSet = new Set(result.rows.map(row => canonicalPhone(row.telefone)).filter(Boolean));
+  const matchSet = new Set(result.rows.map(row => `${row.id_vaga}:${row.id_match}`));
+  const keys = new Set();
+  for (const c of candidates) {
+    if ((c.telefone && phoneSet.has(canonicalPhone(c.telefone))) || matchSet.has(`${c.idVacancy}:${c.idMatch}`)) keys.add(c.key);
+  }
+  return keys;
+}
 async function listAtivacoes(page) {
   const pageSize = 25;
   const current = Math.max(1, page);
@@ -493,6 +509,8 @@ async function createPreview(limit, contractType) {
       Object.assign(c, extractDetail(await pandapeGet(`/Company/Match/Matches/${c.idVacancy}?idvacancyfolder=${c.folderId}&idMatch=${c.idMatch}`)));
     } catch (error) { c.detailError = error.message; }
   });
+  const already = await activatedKeys(candidates);
+  for (const candidate of candidates) candidate.ativado = already.has(candidate.key);
   const stageWarning = await missingStageWarning();
   if (stageWarning) warnings.push(stageWarning);
   const id = crypto.randomUUID();
@@ -526,12 +544,38 @@ function samePhone(left, right) {
   const b = canonicalPhone(right);
   return Boolean(a) && a === b;
 }
+let crmQueue = Promise.resolve();
+let crmNextAt = 0;
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 async function crm(method, relativePath, payload) {
-  const body = await upstream(config.crmBase + relativePath, {
-    method, headers: { Authorization: `Bearer ${config.crmKey}`, ...(payload ? { 'Content-Type': 'application/json' } : {}) },
-    ...(payload ? { body: JSON.stringify(payload) } : {})
-  });
-  try { return JSON.parse(body); } catch { return null; }
+  const run = crmQueue.then(() => crmRequest(method, relativePath, payload));
+  crmQueue = run.then(() => {}, () => {});
+  return run;
+}
+async function crmRequest(method, relativePath, payload) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const wait = crmNextAt - Date.now();
+    if (wait > 0) await sleep(wait);
+    crmNextAt = Date.now() + 250;
+    let response;
+    try {
+      response = await fetch(config.crmBase + relativePath, {
+        method,
+        headers: { Authorization: `Bearer ${config.crmKey}`, Accept: 'application/json', ...(payload ? { 'Content-Type': 'application/json' } : {}) },
+        ...(payload ? { body: JSON.stringify(payload) } : {}),
+        signal: AbortSignal.timeout(30000)
+      });
+    } catch { throw new Error('Falha de conexão com serviço externo.'); }
+    if (response.status === 429) {
+      const retry = Number(response.headers.get('retry-after'));
+      await sleep((Number.isFinite(retry) && retry > 0 ? retry : 2) * 1000);
+      continue;
+    }
+    const text = await response.text();
+    if (!response.ok) throw new Error(`Serviço externo retornou HTTP ${response.status}.`);
+    try { return JSON.parse(text); } catch { return null; }
+  }
+  throw new Error('O CRM limitou as requisições. Aguarde e tente o restante de novo.');
 }
 function items(body) { return Array.isArray(body) ? body : Array.isArray(body?.items) ? body.items : []; }
 function stageIsKnown(pipelines, stageId) {
@@ -716,8 +760,8 @@ async function importCandidates(input) {
   const snapshot = snapshots.get(input.snapshotId);
   if (!snapshot || snapshot.expiresAt < Date.now()) throw Object.assign(new Error('Consulta expirou. Atualize a lista.'), { status: 409 });
   const keys = [...new Set(input.keys)];
-  if (!keys.length || keys.length !== input.keys.length || keys.length > config.maxImport) {
-    throw Object.assign(new Error(`Selecione entre 1 e ${config.maxImport} pessoas sem repetições.`), { status: 400 });
+  if (!keys.length || keys.length !== input.keys.length || keys.length > config.maxCandidates) {
+    throw Object.assign(new Error(`Selecione entre 1 e ${config.maxCandidates} pessoas sem repetições.`), { status: 400 });
   }
   const classifications = input.classifications || {};
   if (typeof classifications !== 'object' || Array.isArray(classifications)) throw Object.assign(new Error('Classificação inválida.'), { status: 400 });
@@ -737,10 +781,12 @@ async function importCandidates(input) {
   activeImport = true;
   void (async () => { try {
     const membership = await verifyMembership(serverCandidates);
+    const already = await activatedKeys(serverCandidates);
     const seenPhones = new Set();
     for (const c of serverCandidates) {
       let result;
-      if (!membership.has(c.key)) result = { key: c.key, nome: c.nome, status: 'nao_inscrito' };
+      if (already.has(c.key) || c.ativado) result = { key: c.key, nome: c.nome, status: 'ja_ativado' };
+      else if (!membership.has(c.key)) result = { key: c.key, nome: c.nome, status: 'nao_inscrito' };
       else {
         try {
           Object.assign(c, extractDetail(await pandapeGet(`/Company/Match/Matches/${c.idVacancy}?idvacancyfolder=${c.folderId}&idMatch=${c.idMatch}`)));
@@ -756,7 +802,7 @@ async function importCandidates(input) {
       if (result.status === 'criado') job.created++;
       if (result.status === 'ja_existe') job.existing++;
       if (result.status === 'parcial') job.partial++;
-      if (['sem_telefone', 'nao_inscrito', 'telefone_repetido'].includes(result.status)) job.skipped++;
+      if (['sem_telefone', 'nao_inscrito', 'telefone_repetido', 'ja_ativado'].includes(result.status)) job.skipped++;
       if (result.status === 'erro') job.errors++;
     }
     job.status = 'completed';
