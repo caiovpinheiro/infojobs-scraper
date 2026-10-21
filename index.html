@@ -10,6 +10,8 @@
     button { cursor:pointer; } button:disabled { opacity:.48; cursor:not-allowed; }
     .shell { max-width:1240px; margin:auto; padding:35px 22px 70px; }
     header { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:25px; }
+    .back { display:inline-flex; align-items:center; gap:6px; margin:0 0 14px; color:#17699f; font-size:13px; font-weight:750; text-decoration:none; }
+    .back:hover { text-decoration:underline; }
     .eyebrow { color:#2473a9; font-size:12px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
     h1 { font-size:clamp(29px,4vw,42px); letter-spacing:-.045em; margin:8px 0; line-height:1.12; }
     h2 { font-size:19px; letter-spacing:-.02em; margin:0 0 5px; }
@@ -59,6 +61,7 @@
 </head>
 <body>
 <main class="shell">
+  <a class="back" href="https://dnaworkia-candidaturas.vkfaze.easypanel.host/">← Voltar</a>
   <header><div><div class="eyebrow">DNA Work · Operação</div><h1>Pandapé → Bwipo CRM</h1><p class="muted">Veja os inscritos e suas vagas. Você decide quem entra no CRM.</p></div><span id="badge" class="badge">Aguardando acesso</span></header>
   <nav class="tabs" aria-label="Seções"><button type="button" id="tabConsulta" class="tab on">Consulta</button><button type="button" id="tabAtivacoes" class="tab">Ativações</button></nav>
   <div id="paneConsulta">
@@ -88,6 +91,7 @@
     <div class="row wrap" style="margin-top:18px"><p class="muted">Criar no CRM: contato (se necessário), negócio, nota com vaga e tag configurada. Negócios já existentes são pulados.</p><button id="reviewBtn" class="btn danger" disabled>Revisar criação no CRM</button></div>
     <div id="jobStatus" class="status" role="status" aria-live="polite"></div><div id="progress" class="progress hidden"><span id="progressBar"></span></div>
     <div id="results" class="table-wrap hidden"><table><thead><tr><th>Pessoa</th><th>Resultado</th><th>Contato</th><th>Negócio</th></tr></thead><tbody id="resultRows"></tbody></table></div>
+    <div class="row wrap" style="margin-top:12px"><button id="retryErrorsBtn" class="btn alt hidden" type="button">Tentar de novo quem deu erro</button></div>
   </section>
   </div>
   <section id="paneAtivacoes" class="card hidden" aria-labelledby="activationsTitle">
@@ -104,8 +108,9 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const e = Object.fromEntries(['username','password','searchType','vacancyLimit','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selectPageBtn','selectAllBtn','pageCheck','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn','pagePrev','pageNext','pageLabel','tabConsulta','tabAtivacoes','paneConsulta','paneAtivacoes','activationsRefresh','activationsStatus','activationRows','activationPrev','activationNext','activationLabel'].map(id => [id,$(id)]));
+  const e = Object.fromEntries(['username','password','searchType','vacancyLimit','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selectPageBtn','selectAllBtn','pageCheck','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn','pagePrev','pageNext','pageLabel','tabConsulta','tabAtivacoes','paneConsulta','paneAtivacoes','activationsRefresh','activationsStatus','activationRows','activationPrev','activationNext','activationLabel','retryErrorsBtn'].map(id => [id,$(id)]));
   let activationPage = 1;
+  let retryKeys = [];
   const PAGE_SIZE = 25;
   let snapshot = null;
   let classification = {};
@@ -243,7 +248,13 @@
       for(const item of job.results||[]) { const row=document.createElement('tr'); cell(row,item.nome); cell(row,item.status+(item.error?' · '+item.error:'')); cell(row,item.contactId); cell(row,item.dealId); e.resultRows.append(row); }
       e.results.classList.remove('hidden'); busy=false; e.loadBtn.disabled=false; e.refreshBtn.disabled=false; renderPeople();
       e.confirmBtn.disabled=false;
-      if(job.status==='completed') { selected.clear(); snapshot=null; e.reviewBtn.disabled=true; e.selection.textContent='Atualize a consulta antes de criar outro lote.'; }
+      retryKeys=(job.results||[]).filter(item=>item.status==='erro'&&item.key).map(item=>item.key);
+      const uniqueRetry=[...new Set(retryKeys)];
+      retryKeys=uniqueRetry;
+      e.retryErrorsBtn.classList.toggle('hidden', !retryKeys.length || !snapshot);
+      e.retryErrorsBtn.textContent=retryKeys.length?`Tentar de novo quem deu erro (${retryKeys.length})`:'Tentar de novo quem deu erro';
+      if(job.status==='completed' && !retryKeys.length) { selected.clear(); snapshot=null; e.reviewBtn.disabled=true; e.selection.textContent='Atualize a consulta antes de criar outro lote.'; }
+      else if(retryKeys.length) e.selection.textContent=`${retryKeys.length} pessoa(s) falharam. Use o botão abaixo para tentar só essas, sem buscar de novo.`;
     } catch(error) { message(e.jobStatus,`Não foi possível acompanhar o lote ${jobId}: ${error.message}. Consulte os logs antes de repetir.`,true); busy=false; e.loadBtn.disabled=false; e.refreshBtn.disabled=false; renderPeople(); }
   }
   async function create() {
@@ -295,6 +306,14 @@
     e.confirmDialog.showModal();
   });
   e.cancelBtn.addEventListener('click',()=>e.confirmDialog.close()); e.confirmBtn.addEventListener('click',create);
+  e.retryErrorsBtn.addEventListener('click',()=>{
+    if(!snapshot||!retryKeys.length||busy) return;
+    selected=new Set(retryKeys.filter(key=>snapshot.candidates.some(c=>c.key===key)));
+    const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))).filter(Boolean))];
+    if(types.length!==1) { message(e.jobStatus,'As pessoas com erro não estão no mesmo tipo de contrato.',true); return; }
+    e.confirmText.textContent=`Tentar de novo ${selected.size} pessoa(s) que falharam, em vagas ${types[0]==='ESTAGIO'?'de estágio':'CLT'}? Quem já entrou no CRM será pulado.`;
+    e.confirmDialog.showModal();
+  });
   function showTab(name) {
     const activations = name === 'ativacoes';
     e.paneConsulta.classList.toggle('hidden', activations);
