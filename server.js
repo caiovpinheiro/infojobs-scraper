@@ -358,6 +358,8 @@ function resetLoginState() {
 }
 async function pandapeHeaders(form = false, force = false) {
   return { Cookie: await getPandapeCookie(force), 'X-Requested-With': 'XMLHttpRequest',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    Accept: 'text/html,application/json',
     ...(form ? { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' } : {}) };
 }
 function pandapeAuthError() {
@@ -394,10 +396,22 @@ async function pandapeForm(relativePath, params) {
 }
 async function pandapeRequest(relativePath, params) {
   const form = params !== undefined;
-  const makeRequest = async force => upstream(config.pandapeBase + relativePath, {
-    ...(form ? { method: 'POST', body: new URLSearchParams(params).toString() } : {}),
-    headers: await pandapeHeaders(form, force)
-  });
+  const makeRequest = async force => {
+    let last;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        return await upstream(config.pandapeBase + relativePath, {
+          ...(form ? { method: 'POST', body: new URLSearchParams(params).toString() } : {}),
+          headers: await pandapeHeaders(form, force)
+        });
+      } catch (error) {
+        last = error;
+        if (error.code === 'PANDAPE_AUTH' || !/HTTP 403/.test(error.message || '') || attempt === 3) throw error;
+        await sleep(2000 * (attempt + 1));
+      }
+    }
+    throw last;
+  };
   try { return await makeRequest(false); }
   catch (error) {
     if (error.code !== 'PANDAPE_AUTH' || !config.loginUrl) throw error;
@@ -789,7 +803,7 @@ async function importCandidates(input) {
       else if (!membership.has(c.key)) result = { key: c.key, nome: c.nome, status: 'nao_inscrito' };
       else {
         try {
-          Object.assign(c, extractDetail(await pandapeGet(`/Company/Match/Matches/${c.idVacancy}?idvacancyfolder=${c.folderId}&idMatch=${c.idMatch}`)));
+          if (!c.telefone) Object.assign(c, extractDetail(await pandapeGet(`/Company/Match/Matches/${c.idVacancy}?idvacancyfolder=${c.folderId}&idMatch=${c.idMatch}`)));
           if (c.telefone && seenPhones.has(canonicalPhone(c.telefone))) result = { key: c.key, nome: c.nome, status: 'telefone_repetido' };
           else {
             if (c.telefone) seenPhones.add(canonicalPhone(c.telefone));
