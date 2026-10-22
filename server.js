@@ -782,7 +782,7 @@ async function verifyMembership(selected) {
   return found;
 }
 async function importCandidates(input) {
-  if (!input || typeof input !== 'object' || !Array.isArray(input.keys) || !['CLT', 'ESTAGIO'].includes(input.tipo) || !/^[0-9a-f-]{36}$/i.test(input.requestId || '')) {
+  if (!input || typeof input !== 'object' || !Array.isArray(input.keys) || !['CLT', 'ESTAGIO', 'MISTO'].includes(input.tipo) || !/^[0-9a-f-]{36}$/i.test(input.requestId || '')) {
     throw Object.assign(new Error('Seleção inválida.'), { status: 400 });
   }
   const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ snapshotId: input.snapshotId, keys: input.keys, tipo: input.tipo, classifications: input.classifications || {} })).digest('hex');
@@ -804,10 +804,13 @@ async function importCandidates(input) {
   const selected = keys.map(key => byKey.get(key));
   if (selected.some(c => !c)) throw Object.assign(new Error('Candidato fora da consulta.'), { status: 400 });
   const resolvedType = c => config.vacancyTypes[c.idVacancy] || c.tipo || snapshot.vacancies.find(v => v.id === c.idVacancy)?.type || classifications[c.idVacancy];
-  if (selected.some(c => resolvedType(c) !== input.tipo)) {
+  if (selected.some(c => !['CLT', 'ESTAGIO'].includes(resolvedType(c)))) {
+    throw Object.assign(new Error('Classifique todas as vagas selecionadas antes de criar.'), { status: 400 });
+  }
+  if (input.tipo !== 'MISTO' && selected.some(c => resolvedType(c) !== input.tipo)) {
     throw Object.assign(new Error('Classifique todas as vagas selecionadas com o tipo escolhido.'), { status: 400 });
   }
-  const serverCandidates = selected.map(c => ({ ...c, tipo: input.tipo }));
+  const serverCandidates = selected.map(c => ({ ...c, tipo: resolvedType(c) }));
   const job = { id: crypto.randomUUID(), status: 'running', total: selected.length, processed: 0, created: 0,
     existing: 0, partial: 0, skipped: 0, errors: 0, results: [] };
   imports.set(input.requestId, { job, fingerprint });

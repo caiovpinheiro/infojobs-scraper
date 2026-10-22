@@ -355,7 +355,9 @@ test('a página e o servidor não carregam segredo nem movem candidato', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const source = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   assert.match(html, /Selecionar primeiras/);
+  assert.match(html, /Selecionar todos marca todas as pessoas novas desta consulta, em todas as páginas/);
   assert.match(html, /Confirmar criação no CRM/);
+  assert.match(source, /'MISTO'/);
   assert.equal(source.includes('MoveToFolder'), false);
   assert.equal(source.includes('discord.com'), false);
   assert.equal(source.includes('graph.facebook.com'), false);

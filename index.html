@@ -83,12 +83,12 @@
   </section>
 
   <section id="peopleSection" class="card hidden" aria-labelledby="peopleTitle">
-    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">Quem já foi ativado aparece na lista e fica de fora. Selecionar todos marca só as pessoas novas. A criação segue o ritmo do CRM.</p></div><button id="clearBtn" class="minor">Limpar seleção</button></div>
-    <div class="controls"><label>Tipo de vaga<select id="typeFilter"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade para selecionar<input id="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex.: 20"></label><button id="selectFirstBtn" class="btn alt" disabled>Selecionar primeiras</button><button id="selectPageBtn" class="btn alt" disabled>Selecionar página</button><button id="selectAllBtn" class="btn alt" disabled>Selecionar todos</button></div>
+    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">Quem já foi ativado aparece na lista e fica de fora. Selecionar todos marca todas as pessoas novas desta consulta, em todas as páginas. CLT e estágio podem ir no mesmo lote.</p></div><button id="clearBtn" class="minor" type="button">Limpar seleção</button></div>
+    <div class="controls"><label>Tipo de vaga<select id="typeFilter"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade para selecionar<input id="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex.: 20"></label><button id="selectFirstBtn" class="btn alt" type="button" disabled>Selecionar primeiras</button><button id="selectPageBtn" class="btn alt" type="button" disabled>Selecionar página</button><button id="selectAllBtn" class="btn alt" type="button" disabled>Selecionar todos</button></div>
     <div class="split"><p id="selection" class="muted"></p><p id="tableCount" class="muted"></p></div>
     <div class="table-wrap"><table><thead><tr><th><input id="pageCheck" type="checkbox" aria-label="Selecionar as pessoas desta página"></th><th>Candidato</th><th>Telefone</th><th>CEP</th><th>Vaga</th><th>Tipo</th></tr></thead><tbody id="candidateRows"></tbody></table></div>
     <div class="pager"><button id="pagePrev" class="minor" type="button">Anterior</button><span id="pageLabel" class="muted"></span><button id="pageNext" class="minor" type="button">Próxima</button></div>
-    <div class="row wrap" style="margin-top:18px"><p class="muted">Criar no CRM: contato (se necessário), negócio, nota com vaga e tag configurada. Negócios já existentes são pulados.</p><button id="reviewBtn" class="btn danger" disabled>Revisar criação no CRM</button></div>
+    <div class="row wrap" style="margin-top:18px"><p class="muted">Criar no CRM: contato (se necessário), negócio, nota com vaga e tag configurada. Negócios já existentes são pulados.</p><button id="reviewBtn" class="btn danger" type="button" disabled>Revisar criação no CRM</button></div>
     <div id="jobStatus" class="status" role="status" aria-live="polite"></div><div id="progress" class="progress hidden"><span id="progressBar"></span></div>
     <div id="results" class="table-wrap hidden"><table><thead><tr><th>Pessoa</th><th>Resultado</th><th>Contato</th><th>Negócio</th></tr></thead><tbody id="resultRows"></tbody></table></div>
     <div class="row wrap" style="margin-top:12px"><button id="retryErrorsBtn" class="btn alt hidden" type="button">Tentar de novo quem deu erro</button></div>
@@ -156,11 +156,10 @@
     return snapshot.candidates.filter(c=>!type||typeOf(c)===type);
   }
   function selectablePeople() {
-    const visible=filteredPeople().filter(c=>typeOf(c)&&!c.ativado);
-    const types=[...new Set(visible.map(typeOf))];
-    if (types.length<=1) return visible;
-    const preferred=types.includes(e.typeFilter.value)?e.typeFilter.value:types[0];
-    return visible.filter(c=>typeOf(c)===preferred);
+    return filteredPeople().filter(c=>typeOf(c)&&!c.ativado);
+  }
+  function selectedTypes() {
+    return [...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key)));
   }
   function renderPeople() {
     if (!snapshot) return;
@@ -195,15 +194,20 @@
   }
   function updateSelection() {
     if (!snapshot) return;
-    const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))).filter(Boolean))];
+    const types=selectedTypes();
+    const known=types.filter(type=>type==='CLT'||type==='ESTAGIO');
+    const clt=known.filter(type=>type==='CLT').length;
+    const estagio=known.filter(type=>type==='ESTAGIO').length;
+    const ready=!busy&&selected.size>0&&known.length===selected.size;
     const n=Number(e.quantity.value), available=snapshot.candidates.filter(c=>typeOf(c)===e.typeFilter.value&&!c.ativado).length;
     const already=filteredPeople().filter(c=>c.ativado).length;
     const canSelect=selectablePeople().length>0&&!busy;
     e.selectPageBtn.disabled=!canSelect;
     e.selectAllBtn.disabled=!canSelect;
     e.selectFirstBtn.disabled=busy||!e.typeFilter.value||!Number.isInteger(n)||n<1||n>available;
-    e.reviewBtn.disabled=busy||selected.size===0||types.length!==1;
-    e.selection.textContent=`${selected.size} selecionado(s)`+(already?` · ${already} já ativado(s) ficam de fora`:'')+(types.length>1?' · selecione apenas uma categoria por lote':'')+'.';
+    e.reviewBtn.disabled=!ready;
+    const mix=clt&&estagio?` · ${clt} CLT e ${estagio} estágio`:'';
+    e.selection.textContent=`${selected.size} selecionado(s) de ${selectablePeople().length} disponível(is)`+(already?` · ${already} já ativado(s) ficam de fora`:'')+mix+'.';
     e.quantity.max=String(available);
   }
   async function load() {
@@ -259,14 +263,15 @@
   }
   async function create() {
     if (busy||!snapshot||!selected.size) return;
-    const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))))];
-    if(types.length!==1||!types[0]) return;
-    const signature=snapshot.snapshotId+':'+types[0]+':'+[...selected].sort().join(',');
+    const types=[...new Set(selectedTypes())];
+    if(!types.length||types.some(type=>type!=='CLT'&&type!=='ESTAGIO')) return;
+    const lote=types.length===1?types[0]:'MISTO';
+    const signature=snapshot.snapshotId+':'+lote+':'+[...selected].sort().join(',');
     if(signature!==lastSelection) { requestId=crypto.randomUUID(); lastSelection=signature; }
     busy=true; e.confirmBtn.disabled=true; e.loadBtn.disabled=true; e.refreshBtn.disabled=true; e.confirmDialog.close(); renderPeople();
     message(e.jobStatus,'Iniciando a criação dos registros no CRM…'); e.progress.classList.remove('hidden'); e.progressBar.style.width='0%';
     try {
-      const response=await api('/api/import',{method:'POST',body:JSON.stringify({snapshotId:snapshot.snapshotId,keys:[...selected],tipo:types[0],classifications:classification,requestId})});
+      const response=await api('/api/import',{method:'POST',body:JSON.stringify({snapshotId:snapshot.snapshotId,keys:[...selected],tipo:lote,classifications:classification,requestId})});
       if(!response.jobId) throw new Error('Servidor não retornou o ID do lote.');
       poll(response.jobId);
     } catch(error) { message(e.jobStatus,error.message+' Confira o servidor antes de repetir.',true); busy=false; e.loadBtn.disabled=false; e.refreshBtn.disabled=false; e.confirmBtn.disabled=false; renderPeople(); }
@@ -300,18 +305,22 @@
     selected=new Set(snapshot.candidates.filter(c=>typeOf(c)===type&&!c.ativado).slice(0,n).map(c=>c.key)); renderPeople();
   });
   e.reviewBtn.addEventListener('click',()=>{
-    const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))))];
-    if(types.length!==1||!types[0]) return;
-    e.confirmText.textContent=`Criar até ${selected.size} pessoa(s) de vagas ${types[0]==='ESTAGIO'?'de estágio':'CLT'} no Bwipo CRM? Registros já existentes serão pulados.`;
+    const types=[...new Set(selectedTypes())];
+    if(!types.length||types.some(type=>type!=='CLT'&&type!=='ESTAGIO')) return;
+    const clt=[...selected].filter(key=>typeOf(snapshot.candidates.find(c=>c.key===key))==='CLT').length;
+    const estagio=selected.size-clt;
+    const qual=types.length===1?(types[0]==='ESTAGIO'?'de estágio':'CLT'):`${clt} CLT e ${estagio} estágio`;
+    e.confirmText.textContent=`Criar ${selected.size} pessoa(s) ${qual} no Bwipo CRM? Cada uma recebe a tag do próprio tipo. Registros já existentes serão pulados.`;
     e.confirmDialog.showModal();
   });
   e.cancelBtn.addEventListener('click',()=>e.confirmDialog.close()); e.confirmBtn.addEventListener('click',create);
   e.retryErrorsBtn.addEventListener('click',()=>{
     if(!snapshot||!retryKeys.length||busy) return;
     selected=new Set(retryKeys.filter(key=>snapshot.candidates.some(c=>c.key===key)));
-    const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))).filter(Boolean))];
-    if(types.length!==1) { message(e.jobStatus,'As pessoas com erro não estão no mesmo tipo de contrato.',true); return; }
-    e.confirmText.textContent=`Tentar de novo ${selected.size} pessoa(s) que falharam, em vagas ${types[0]==='ESTAGIO'?'de estágio':'CLT'}? Quem já entrou no CRM será pulado.`;
+    const types=[...new Set(selectedTypes())].filter(Boolean);
+    if(!types.length||types.some(type=>type!=='CLT'&&type!=='ESTAGIO')) { message(e.jobStatus,'As pessoas com erro estão sem tipo de contrato.',true); return; }
+    renderPeople();
+    e.confirmText.textContent=`Tentar de novo ${selected.size} pessoa(s) que falharam? Quem já entrou no CRM será pulado.`;
     e.confirmDialog.showModal();
   });
   function showTab(name) {
