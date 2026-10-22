@@ -138,6 +138,7 @@ let loginCookie = null;
 let loginCookieExpiresAt = 0;
 let loginQueue = Promise.resolve();
 let deployInFlight = null;
+let denialRefreshUsed = false;
 const COOKIE_SKEW_MS = 60 * 1000;
 
 function decodeEntities(value) {
@@ -355,6 +356,7 @@ function resetLoginState() {
   loginCookieExpiresAt = 0;
   loginQueue = Promise.resolve();
   deployInFlight = null;
+  denialRefreshUsed = false;
 }
 async function pandapeHeaders(form = false, force = false) {
   return { Cookie: await getPandapeCookie(force), 'X-Requested-With': 'XMLHttpRequest',
@@ -367,6 +369,11 @@ function pandapeAuthError() {
   error.code = 'PANDAPE_AUTH';
   return error;
 }
+function pandapeDeniedError() {
+  const error = new Error('Serviço externo retornou HTTP 404.');
+  error.code = 'PANDAPE_DENIED';
+  return error;
+}
 async function upstream(url, options = {}) {
   let response;
   try { response = await fetch(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(30000) }); }
@@ -376,7 +383,11 @@ async function upstream(url, options = {}) {
     throw new Error('Serviço externo redirecionou a requisição; verifique sessão e URL.');
   }
   const text = await response.text();
-  if (!response.ok) throw new Error(`Serviço externo retornou HTTP ${response.status}.`);
+  if (!response.ok) {
+    if (url.startsWith(config.pandapeBase) && (response.status === 401 || response.status === 403)) throw pandapeAuthError();
+    if (url.startsWith(config.pandapeBase) && response.status === 404) throw pandapeDeniedError();
+    throw new Error(`Serviço externo retornou HTTP ${response.status}.`);
+  }
   if (url.startsWith(config.pandapeBase) && (/<input[^>]*type=["']password/i.test(text) || /\/Account\/Login/i.test(response.url))) {
     throw pandapeAuthError();
   }
@@ -414,6 +425,15 @@ async function pandapeRequest(relativePath, params) {
   };
   try { return await makeRequest(false); }
   catch (error) {
+    if (error.code === 'PANDAPE_DENIED' && config.loginUrl && !denialRefreshUsed) {
+      denialRefreshUsed = true;
+      try { return await makeRequest(true); }
+      catch (second) {
+        if (second.code !== 'PANDAPE_DENIED') throw second;
+        throw new Error('Pandapé negou o acesso a esta vaga (HTTP 404).');
+      }
+    }
+    if (error.code === 'PANDAPE_DENIED') throw new Error('Pandapé negou o acesso a esta vaga (HTTP 404).');
     if (error.code !== 'PANDAPE_AUTH' || !config.loginUrl) throw error;
     try { return await makeRequest(true); }
     catch (second) {
@@ -483,6 +503,7 @@ async function mapLimited(items, limit, callback) {
   return results;
 }
 async function createPreview(limit, contractType) {
+  denialRefreshUsed = false;
   const vacancyList = await findVacancyIds(limit, contractType);
   const vacancies = [];
   const candidates = [];

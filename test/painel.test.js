@@ -98,6 +98,17 @@ before(async () => {
         res.end(JSON.stringify([{ id: 'pipe', name: 'Candidaturas', stages: [{ id: 'etapa-valida', name: 'Lead de Entrada' }] }]));
         return;
       }
+      if (mode === 'not-found-once' && url.pathname.startsWith('/Company/')) {
+        mode = 'ok';
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('nao encontrado');
+        return;
+      }
+      if (mode === 'always-404' && url.pathname.startsWith('/Company/')) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('nao encontrado');
+        return;
+      }
       if (mode === 'redirect' && url.pathname.startsWith('/Company/')) {
         mode = 'ok';
         res.writeHead(302, { Location: '/Account/Login' });
@@ -189,6 +200,24 @@ test('GET /cookie usa X-Auth-Token, respeita expiresAt e renova uma vez', async 
   mode = 'always-redirect';
   await assert.rejects(() => app.listMatches('10', '77', 1, 25, '15/10/2026 12:00:00'), /Sessão do Pandapé/);
   assert.equal(calls.filter(call => call.path === '/deploy').length, 1);
+  mode = 'ok';
+});
+
+test('HTTP 404 renova o cookie uma vez e não implanta o login', async () => {
+  calls.length = 0;
+  app.resetLoginState();
+  mode = 'not-found-once';
+  const body = await app.listMatches('10', '77', 1, 25, '22/10/2026 12:00:00');
+  assert.equal(body.total, 30);
+  assert.equal(calls.filter(call => call.path === '/cookie' && call.search === '?force=1').length, 1);
+  assert.equal(calls.filter(call => call.path === '/deploy').length, 0);
+
+  calls.length = 0;
+  app.resetLoginState();
+  mode = 'always-404';
+  await assert.rejects(() => app.listMatches('10', '77', 1, 25, '22/10/2026 12:00:00'), /negou o acesso/);
+  assert.equal(calls.filter(call => call.path === '/cookie' && call.search === '?force=1').length, 1);
+  assert.equal(calls.filter(call => call.path === '/deploy').length, 0);
   mode = 'ok';
 });
 
