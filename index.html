@@ -83,12 +83,12 @@
   </section>
 
   <section id="peopleSection" class="card hidden" aria-labelledby="peopleTitle">
-    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">Quem já foi ativado aparece na lista e fica de fora. Selecionar todos marca todas as pessoas novas desta consulta, em todas as páginas. CLT e estágio podem ir no mesmo lote.</p></div><button id="clearBtn" class="minor" type="button">Limpar seleção</button></div>
+    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">A busca não traz vaga nem pessoa que já foi disparada. Selecionar todos marca todas as pessoas desta consulta, em todas as páginas. CLT e estágio podem ir no mesmo lote.</p></div><button id="clearBtn" class="minor" type="button">Limpar seleção</button></div>
     <div class="controls"><label>Tipo de vaga<select id="typeFilter"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade para selecionar<input id="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex.: 20"></label><button id="selectFirstBtn" class="btn alt" type="button" disabled>Selecionar primeiras</button><button id="selectPageBtn" class="btn alt" type="button" disabled>Selecionar página</button><button id="selectAllBtn" class="btn alt" type="button" disabled>Selecionar todos</button></div>
     <div class="split"><p id="selection" class="muted"></p><p id="tableCount" class="muted"></p></div>
     <div class="table-wrap"><table><thead><tr><th><input id="pageCheck" type="checkbox" aria-label="Selecionar as pessoas desta página"></th><th>Candidato</th><th>Telefone</th><th>CEP</th><th>Vaga</th><th>Tipo</th></tr></thead><tbody id="candidateRows"></tbody></table></div>
     <div class="pager"><button id="pagePrev" class="minor" type="button">Anterior</button><span id="pageLabel" class="muted"></span><button id="pageNext" class="minor" type="button">Próxima</button></div>
-    <div class="row wrap" style="margin-top:18px"><p class="muted">Criar no CRM: contato (se necessário), negócio, nota com vaga e tag configurada. Negócios já existentes são pulados.</p><button id="reviewBtn" class="btn danger" type="button" disabled>Revisar criação no CRM</button></div>
+    <div class="row wrap" style="margin-top:18px"><p class="muted">Criar no CRM: contato, negócio na etapa Ativações, nota interna e tag. Quem já está nessa etapa é pulado. Negócio em outra etapa não impede a criação.</p><button id="reviewBtn" class="btn danger" type="button" disabled>Revisar criação no CRM</button></div>
     <div id="jobStatus" class="status" role="status" aria-live="polite"></div><div id="progress" class="progress hidden"><span id="progressBar"></span></div>
     <div id="results" class="table-wrap hidden"><table><thead><tr><th>Pessoa</th><th>Resultado</th><th>Contato</th><th>Negócio</th></tr></thead><tbody id="resultRows"></tbody></table></div>
     <div class="row wrap" style="margin-top:12px"><button id="retryErrorsBtn" class="btn alt hidden" type="button">Tentar de novo quem deu erro</button></div>
@@ -128,9 +128,30 @@
     return 'Basic '+btoa(binary);
   }
   async function api(url, options={}) {
-    const response=await fetch(url,{ ...options, headers:{ Authorization:auth(), ...(options.body?{'Content-Type':'application/json'}:{}) }, credentials:'omit', cache:'no-store' });
+    const retry = options.retry || 0;
+    const request = { ...options };
+    delete request.retry;
+    const method = request.method || 'GET';
+    const canRetry = method === 'GET' || (method === 'POST' && url === '/api/preview');
+    let response;
+    try {
+      response=await fetch(url,{ ...request, headers:{ Authorization:auth(), ...(request.body?{'Content-Type':'application/json'}:{}) }, credentials:'omit', cache:'no-store' });
+    } catch (error) {
+      if (canRetry && retry < 4) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return api(url, { ...request, retry: retry + 1 });
+      }
+      throw new Error('O servidor não respondeu. Tente a busca de novo em instantes.');
+    }
     const data=await response.json().catch(()=>null);
-    if (!response.ok) throw new Error(data?.error || `Falha HTTP ${response.status}.`);
+    if (!response.ok) {
+      const gateway = response.status === 502 || response.status === 503 || response.status === 504;
+      if (gateway && canRetry && retry < 4) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return api(url, { ...request, retry: retry + 1 });
+      }
+      throw new Error(data?.error || (gateway ? `O servidor não respondeu (HTTP ${response.status}). Tente a busca de novo em instantes.` : `Falha HTTP ${response.status}.`));
+    }
     return data;
   }
   function typeOf(candidate) { return snapshot.vacancies.find(v=>v.id===candidate.idVacancy)?.type || classification[candidate.idVacancy] || null; }
@@ -246,7 +267,9 @@
       const job=await api('/api/import/'+encodeURIComponent(jobId));
       const pct=job.total?Math.round(job.processed/job.total*100):0;
       e.progressBar.style.width=pct+'%';
-      message(e.jobStatus,`Lote ${job.id}: ${job.processed}/${job.total} processados · ${job.created} criados · ${job.existing} já existentes · ${job.skipped} pulados · ${job.partial} parciais · ${job.errors} erros.`+(job.error?' '+job.error:''),job.status==='failed');
+      const skip=job.skip||{};
+      const reasons=[skip.sem_telefone&&`${skip.sem_telefone} sem telefone`, skip.nao_inscrito&&`${skip.nao_inscrito} fora de Inscritos`, skip.telefone_repetido&&`${skip.telefone_repetido} telefone repetido`, skip.ja_ativado&&`${skip.ja_ativado} já ativados`].filter(Boolean).join(', ');
+      message(e.jobStatus,`Lote ${job.id}: ${job.processed}/${job.total} processados · ${job.created} criados · ${job.existing} já na etapa Ativações · ${job.skipped} pulados · ${job.partial} parciais · ${job.errors} erros.`+(reasons?` Pulados: ${reasons}.`:'')+(job.error?' '+job.error:''),job.status==='failed');
       if(job.status==='running') return setTimeout(()=>poll(jobId),2500);
       e.resultRows.replaceChildren();
       for(const item of job.results||[]) { const row=document.createElement('tr'); cell(row,item.nome); cell(row,item.status+(item.error?' · '+item.error:'')); cell(row,item.contactId); cell(row,item.dealId); e.resultRows.append(row); }

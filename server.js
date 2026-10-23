@@ -68,7 +68,7 @@ function startDatabase() {
   initDatabase().catch(error => { databaseError = error.message; console.error('[painel] banco:', error.message); });
 }
 async function saveAtivacao(c, result) {
-  if (!pool || !['criado', 'parcial'].includes(result.status)) return;
+  if (!pool || !['criado', 'parcial', 'ja_existe'].includes(result.status)) return;
   const id = result.dealId || `${c.key}:${result.contactId || 'sem-negocio'}`;
   await pool.query(`INSERT INTO ativacoes (
       id, nome, telefone, cep, endereco, nascimento, idade, curso, local_ensino,
@@ -88,7 +88,7 @@ async function activatedKeys(candidates) {
   const vacancies = [...new Set(candidates.map(c => c.idVacancy).filter(Boolean))];
   const matches = [...new Set(candidates.map(c => c.idMatch).filter(Boolean))];
   const result = await pool.query(`SELECT telefone, id_vaga, id_match FROM ativacoes
-    WHERE status IN ('criado', 'parcial')
+    WHERE status IN ('criado', 'parcial', 'ja_existe')
       AND (telefone = ANY($1::text[]) OR (id_vaga = ANY($2::text[]) AND id_match = ANY($3::text[])))`, [phones, vacancies, matches]);
   const phoneSet = new Set(result.rows.map(row => canonicalPhone(row.telefone)).filter(Boolean));
   const matchSet = new Set(result.rows.map(row => `${row.id_vaga}:${row.id_match}`));
@@ -97,6 +97,24 @@ async function activatedKeys(candidates) {
     if ((c.telefone && phoneSet.has(canonicalPhone(c.telefone))) || matchSet.has(`${c.idVacancy}:${c.idMatch}`)) keys.add(c.key);
   }
   return keys;
+}
+async function loadDispatched() {
+  const empty = { vacancies: new Set(), matches: new Set(), phones: new Set() };
+  if (!pool) return empty;
+  const result = await pool.query(`SELECT telefone, id_vaga, id_match FROM ativacoes WHERE status IN ('criado', 'parcial', 'ja_existe')`);
+  for (const row of result.rows) {
+    if (row.id_vaga) empty.vacancies.add(String(row.id_vaga));
+    if (row.id_vaga && row.id_match) empty.matches.add(`${row.id_vaga}:${row.id_match}`);
+    const phone = canonicalPhone(row.telefone);
+    if (phone) empty.phones.add(phone);
+  }
+  return empty;
+}
+function alreadyDispatched(candidate, dispatched) {
+  if (!dispatched) return false;
+  if (dispatched.matches.has(`${candidate.idVacancy}:${candidate.idMatch}`)) return true;
+  const phone = canonicalPhone(candidate.telefone);
+  return Boolean(phone) && dispatched.phones.has(phone);
 }
 async function listAtivacoes(page) {
   const pageSize = 25;
@@ -502,16 +520,24 @@ async function mapLimited(items, limit, callback) {
   }));
   return results;
 }
+function dealStageId(deal) {
+  return deal?.stageId || deal?.stage?.id || '';
+}
 async function createPreview(limit, contractType) {
   denialRefreshUsed = false;
+  const dispatched = await loadDispatched();
   const vacancyList = await findVacancyIds(limit, contractType);
   const vacancies = [];
   const candidates = [];
   const warnings = [];
   let total = 0;
+  let skippedVacancies = 0;
+  let reachedCap = false;
   const cutoff = brTimestamp();
   for (const card of vacancyList.cards) {
+    if (candidates.length >= config.maxCandidates) { reachedCap = true; break; }
     const id = card.id;
+    if (dispatched.vacancies.has(String(id))) { skippedVacancies++; continue; }
     try {
       const matchPage = await pandapeGet(`/Company/Match/Matches/${id}`);
       const folders = extractFolders(matchPage);
@@ -522,30 +548,50 @@ async function createPreview(limit, contractType) {
         catch (error) { warnings.push(`Vaga ${id}: tipo de contrato não lido (${error.message}).`); }
       }
       const first = await listMatches(id, folders.inscritos, 1, 25, cutoff);
-      const vacancy = { id, title: folders.title || card.title || `Vaga ${id}`, type, total: first.total };
-      vacancies.push(vacancy); total += first.total;
-      if (candidates.length >= config.maxCandidates || first.total === 0) continue;
+      const vacancy = { id, title: folders.title || card.title || `Vaga ${id}`, type, total: 0 };
       const seen = new Set();
-      for (let page = 1; page <= 80 && seen.size < first.total && candidates.length < config.maxCandidates; page++) {
+      const fresh = [];
+      for (let page = 1; page <= 80 && seen.size < first.total && candidates.length + fresh.length < config.maxCandidates; page++) {
         const batch = page === 1 ? first : await listMatches(id, folders.inscritos, page, 25, cutoff);
         if (!batch.candidates.length) break;
         for (const c of batch.candidates) {
           if (seen.has(c.idMatch)) continue;
           seen.add(c.idMatch);
-          candidates.push({ key: `${id}:${c.idMatch}`, idMatch: c.idMatch, idVacancy: id, nome: c.nome,
-            vaga: vacancy.title, tipo: vacancy.type, telefone: null, cep: null, folderId: folders.inscritos });
-          if (candidates.length >= config.maxCandidates) break;
+          const person = { key: `${id}:${c.idMatch}`, idMatch: c.idMatch, idVacancy: id, nome: c.nome,
+            vaga: vacancy.title, tipo: vacancy.type, telefone: null, cep: null, folderId: folders.inscritos };
+          if (alreadyDispatched(person, dispatched)) continue;
+          fresh.push(person);
+          if (candidates.length + fresh.length >= config.maxCandidates) break;
         }
       }
+      if (!fresh.length) continue;
+      vacancy.total = fresh.length;
+      vacancies.push(vacancy);
+      total += fresh.length;
+      candidates.push(...fresh);
+      if (candidates.length >= config.maxCandidates) { reachedCap = true; break; }
     } catch (error) { warnings.push(`Vaga ${id}: ${error.message}`); }
   }
+  if (reachedCap) warnings.unshift(`A consulta parou em ${config.maxCandidates} pessoas novas. As vagas seguintes não foram abertas.`);
+  if (skippedVacancies) warnings.unshift(`${skippedVacancies} vaga(s) já disparada(s) não foram consultadas de novo.`);
   await mapLimited(candidates, 5, async c => {
     try {
       Object.assign(c, extractDetail(await pandapeGet(`/Company/Match/Matches/${c.idVacancy}?idvacancyfolder=${c.folderId}&idMatch=${c.idMatch}`)));
     } catch (error) { c.detailError = error.message; }
   });
-  const already = await activatedKeys(candidates);
-  for (const candidate of candidates) candidate.ativado = already.has(candidate.key);
+  const visible = [];
+  for (const candidate of candidates) {
+    if (alreadyDispatched(candidate, dispatched)) continue;
+    candidate.ativado = false;
+    visible.push(candidate);
+  }
+  candidates.length = 0;
+  candidates.push(...visible);
+  for (const vacancy of vacancies) vacancy.total = candidates.filter(c => c.idVacancy === vacancy.id).length;
+  const listedVacancies = vacancies.filter(vacancy => vacancy.total > 0);
+  vacancies.length = 0;
+  vacancies.push(...listedVacancies);
+  total = candidates.length;
   const stageWarning = await missingStageWarning();
   if (stageWarning) warnings.push(stageWarning);
   const id = crypto.randomUUID();
@@ -553,7 +599,7 @@ async function createPreview(limit, contractType) {
   snapshots.set(id, snapshot);
   for (const [key, value] of snapshots) if (value.expiresAt < Date.now()) snapshots.delete(key);
   return { snapshotId: id, expiresAt: new Date(snapshot.expiresAt).toISOString(), total, listed: candidates.length, maxImport: config.maxImport,
-    vacancyLimit: vacancyList.limit, contractType: vacancyList.contractType, truncated: vacancyList.capped || total > candidates.length, vacancies, candidates, warnings };
+    vacancyLimit: vacancyList.limit, contractType: vacancyList.contractType, truncated: vacancyList.capped, vacancies, candidates, warnings };
 }
 function startPreview(limit, contractType) {
   const running = [...previewJobs.values()].find(job => job.status === 'running');
@@ -738,8 +784,9 @@ async function createInCrm(c) {
     if (!contact) contact = await crm('POST', '/contacts', { name: c.nome, phone });
     if (!contact?.id) throw new Error('CRM não retornou o ID do contato.');
     result.contactId = contact.id;
-    const deals = items(await crm('GET', '/deals?contactId=' + encodeURIComponent(contact.id)));
-    if (deals.length) { result.status = 'ja_existe'; result.dealId = deals[0].id; return result; }
+    const deals = items(await crm('GET', '/deals?contactId=' + encodeURIComponent(contact.id) + '&perPage=100'));
+    const existing = deals.find(deal => dealStageId(deal) === targets.stageId);
+    if (existing) { result.status = 'ja_existe'; result.dealId = existing.id; return result; }
     const deal = await crm('POST', '/deals', {
       stageId: targets.stageId,
       contactId: contact.id,
@@ -812,7 +859,7 @@ async function importCandidates(input) {
   }
   const serverCandidates = selected.map(c => ({ ...c, tipo: resolvedType(c) }));
   const job = { id: crypto.randomUUID(), status: 'running', total: selected.length, processed: 0, created: 0,
-    existing: 0, partial: 0, skipped: 0, errors: 0, results: [] };
+    existing: 0, partial: 0, skipped: 0, errors: 0, skip: { sem_telefone: 0, nao_inscrito: 0, telefone_repetido: 0, ja_ativado: 0 }, results: [] };
   imports.set(input.requestId, { job, fingerprint });
   jobs.set(job.id, job);
   if (jobs.size > 200) jobs.delete(jobs.keys().next().value);
@@ -840,7 +887,7 @@ async function importCandidates(input) {
       if (result.status === 'criado') job.created++;
       if (result.status === 'ja_existe') job.existing++;
       if (result.status === 'parcial') job.partial++;
-      if (['sem_telefone', 'nao_inscrito', 'telefone_repetido', 'ja_ativado'].includes(result.status)) job.skipped++;
+      if (job.skip[result.status] !== undefined) { job.skip[result.status]++; job.skipped++; }
       if (result.status === 'erro') job.errors++;
     }
     job.status = 'completed';

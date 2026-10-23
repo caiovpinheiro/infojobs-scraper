@@ -16,6 +16,7 @@ let cookieBehavior = 'valid';
 let deployed = false;
 let healthDown = 0;
 let crmMode = false;
+let existingDeal = '';
 let conversationMisses = 0;
 let server;
 let base;
@@ -53,7 +54,11 @@ before(async () => {
         if (url.pathname === '/tags' && req.method === 'POST') return json({ id: 'tag-' + JSON.parse(body).name, name: JSON.parse(body).name });
         if (url.pathname === '/contacts' && req.method === 'GET') return json({ items: [] });
         if (url.pathname === '/contacts' && req.method === 'POST') return json({ id: 'contact-1', name: 'Pessoa Teste', phone: JSON.parse(body).phone });
-        if (url.pathname === '/deals' && req.method === 'GET') return json({ items: [] });
+        if (url.pathname === '/deals' && req.method === 'GET') {
+          if (existingDeal === 'ativacoes') return json({ items: [{ id: 'deal-antiga', stageId: 'etapa-ativacoes', title: 'Pessoa Teste' }] });
+          if (existingDeal === 'outra') return json({ items: [{ id: 'deal-b2b', stageId: 'etapa-b2b', title: 'Outro negócio' }] });
+          return json({ items: [] });
+        }
         if (url.pathname === '/deals' && req.method === 'POST') return json({ id: 'deal-1' });
         if (url.pathname === '/deals/deal-1/custom-fields' && req.method === 'PUT') return json({ ok: true });
         if (url.pathname === '/deals/deal-1/tags' && req.method === 'POST') return json({ ok: true });
@@ -314,6 +319,7 @@ test('a consulta lista e conta inscritos sem criar no CRM', async () => {
 test('criação grava os campos, a tag e a nota interna da conversa', async () => {
   calls.length = 0;
   crmMode = true;
+  existingDeal = '';
   conversationMisses = 3;
   process.env.CRM_NOTE_POLL_MS = '15';
   process.env.CRM_NOTE_WAIT_MS = '5000';
@@ -348,6 +354,34 @@ test('criação grava os campos, a tag e a nota interna da conversa', async () =
   assert.ok(calls.indexOf(tag) < calls.indexOf(noteCall));
   assert.equal(calls.filter(call => call.path === '/conversations').length, 4);
   crmMode = false;
+  existingDeal = '';
+});
+
+test('negócio fora de Ativações não impede criar; negócio nessa etapa é pulado', async () => {
+  calls.length = 0;
+  crmMode = true;
+  existingDeal = 'outra';
+  conversationMisses = 0;
+  process.env.CRM_NOTE_POLL_MS = '15';
+  process.env.CRM_NOTE_WAIT_MS = '2000';
+  app.resetCrmTargets();
+  const person = {
+    key: '10:100', nome: 'Pessoa Teste', telefone: '11988887777', cep: '01310-100',
+    vaga: 'Operador de Caixa', tipo: 'CLT', idVacancy: '10', idMatch: '100'
+  };
+  const created = await app.createInCrm(person);
+  assert.equal(created.status, 'criado', created.error);
+  assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 1);
+
+  calls.length = 0;
+  app.resetCrmTargets();
+  existingDeal = 'ativacoes';
+  const skipped = await app.createInCrm(person);
+  assert.equal(skipped.status, 'ja_existe');
+  assert.equal(skipped.dealId, 'deal-antiga');
+  assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 0);
+  crmMode = false;
+  existingDeal = '';
 });
 
 test('a página e o servidor não carregam segredo nem movem candidato', () => {
@@ -355,7 +389,7 @@ test('a página e o servidor não carregam segredo nem movem candidato', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const source = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   assert.match(html, /Selecionar primeiras/);
-  assert.match(html, /Selecionar todos marca todas as pessoas novas desta consulta, em todas as páginas/);
+  assert.match(html, /A busca não traz vaga nem pessoa que já foi disparada/);
   assert.match(html, /Confirmar criação no CRM/);
   assert.match(source, /'MISTO'/);
   assert.equal(source.includes('MoveToFolder'), false);
