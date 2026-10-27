@@ -277,17 +277,30 @@ function parseExpiry(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   return Date.parse(value);
 }
+function loginServiceError(status) {
+  return status === 500 || status === 502 || status === 503;
+}
 async function fetchLoginCookie(force) {
   let response;
-  try {
-    response = await fetch(`${config.loginUrl}/cookie${force ? '?force=1' : ''}`, {
-      headers: { 'X-Auth-Token': config.loginToken, Accept: 'application/json' },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(120000)
-    });
-  } catch { throw new Error('Não foi possível acessar o serviço pandape-login.'); }
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      response = await fetch(`${config.loginUrl}/cookie${force ? '?force=1' : ''}`, {
+        headers: { 'X-Auth-Token': config.loginToken, Accept: 'application/json' },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(120000)
+      });
+    } catch { throw new Error('Não foi possível acessar o serviço pandape-login.'); }
+    if (loginServiceError(response.status) && attempt === 0) {
+      lastStatus = response.status;
+      await sleep(1500);
+      continue;
+    }
+    lastStatus = response.status;
+    break;
+  }
   if (response.status >= 300 && response.status < 400) throw new Error('pandape-login redirecionou a requisição.');
-  if (!response.ok) throw new Error(`pandape-login retornou HTTP ${response.status}.`);
+  if (!response.ok) throw new Error(`pandape-login retornou HTTP ${lastStatus}.`);
   let data;
   try { data = await response.json(); } catch { throw new Error('Resposta inválida do pandape-login.'); }
   const expiry = parseExpiry(data.expiresAt);
@@ -353,10 +366,13 @@ async function getPandapeCookie(force = false) {
   if (!config.loginUrl) return config.cookie;
   return enqueueLogin(async () => {
     if (!force && cookieFresh()) return loginCookie;
-    if (force) { loginCookie = null; loginCookieExpiresAt = 0; }
     try {
       return await fetchLoginCookie(force);
     } catch (error) {
+      if (force && !isStaleCookie(error)) {
+        try { return await fetchLoginCookie(false); }
+        catch { if (cookieFresh()) return loginCookie; }
+      }
       if (!force && isStaleCookie(error)) {
         try { return await fetchLoginCookie(true); }
         catch (second) {
@@ -365,6 +381,7 @@ async function getPandapeCookie(force = false) {
         }
       }
       if (force && config.deployUrl && isStaleCookie(error)) return recoverByDeploy();
+      if (cookieFresh()) return loginCookie;
       throw error;
     }
   });
@@ -827,13 +844,17 @@ async function verifyMembership(selected) {
   const found = new Set();
   const cutoff = brTimestamp();
   for (const [id, group] of groups) {
-    const folder = extractFolders(await pandapeGet(`/Company/Match/Matches/${id}`)).inscritos;
-    if (!folder) continue;
-    const requested = new Set(group.map(c => c.idMatch));
-    for (let page = 1; page <= 80 && requested.size; page++) {
-      const response = await listMatches(id, folder, page, 25, cutoff);
-      for (const c of response.candidates) if (requested.delete(c.idMatch)) found.add(`${id}:${c.idMatch}`);
-      if (!response.candidates.length || page * 25 >= response.total) break;
+    try {
+      const folder = extractFolders(await pandapeGet(`/Company/Match/Matches/${id}`)).inscritos;
+      if (!folder) continue;
+      const requested = new Set(group.map(c => c.idMatch));
+      for (let page = 1; page <= 80 && requested.size; page++) {
+        const response = await listMatches(id, folder, page, 25, cutoff);
+        for (const c of response.candidates) if (requested.delete(c.idMatch)) found.add(`${id}:${c.idMatch}`);
+        if (!response.candidates.length || page * 25 >= response.total) break;
+      }
+    } catch (error) {
+      for (const c of group) c.membershipError = error.message;
     }
   }
   return found;
@@ -881,6 +902,7 @@ async function importCandidates(input) {
     for (const c of serverCandidates) {
       let result;
       if (already.has(c.key) || c.ativado) result = { key: c.key, nome: c.nome, status: 'ja_ativado' };
+      else if (c.membershipError) result = { key: c.key, nome: c.nome, status: 'erro', error: c.membershipError };
       else if (!membership.has(c.key)) result = { key: c.key, nome: c.nome, status: 'nao_inscrito' };
       else {
         try {

@@ -78,6 +78,11 @@ before(async () => {
       }
       if (url.pathname === '/cookie') {
         const force = url.searchParams.get('force');
+        if (cookieBehavior === 'force-500' && force) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('falha');
+          return;
+        }
         const expired = cookieBehavior === 'expired-unless-force' ? !force : cookieBehavior === 'expired-until-deploy' ? !deployed : false;
         const cookie = deployed ? 'ats-webui=sessao-pos-deploy' : force ? 'ats-webui=sessao-renovada' : COOKIE;
         const expiresAt = new Date(Date.now() + (expired ? -60_000 : 2 * 60 * 60 * 1000)).toISOString();
@@ -382,6 +387,18 @@ test('negócio fora de Ativações não impede criar; negócio nessa etapa é pu
   assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 0);
   crmMode = false;
   existingDeal = '';
+});
+
+test('HTTP 500 ao forçar o login reaproveita o cookie em cache', async () => {
+  calls.length = 0;
+  app.resetLoginState();
+  cookieBehavior = 'valid';
+  assert.equal(await app.getPandapeCookie(false), COOKIE);
+  cookieBehavior = 'force-500';
+  assert.equal(await app.getPandapeCookie(true), COOKIE);
+  assert.ok(calls.some(call => call.path === '/cookie' && call.search === '?force=1'));
+  assert.ok(calls.some(call => call.path === '/cookie' && call.search === ''));
+  cookieBehavior = 'valid';
 });
 
 test('vaga sem inscritos não é erro de formato', () => {
