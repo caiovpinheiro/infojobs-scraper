@@ -403,7 +403,7 @@ test('a página e o servidor não carregam segredo nem movem candidato', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const source = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   assert.match(html, /Selecionar primeiras/);
-  assert.match(html, /A busca não traz vaga nem pessoa que já foi disparada/);
+  assert.match(html, /A busca não traz pessoa que já foi disparada/);
   assert.match(html, /Confirmar criação no CRM/);
   assert.match(source, /'MISTO'/);
   assert.equal(source.includes('MoveToFolder'), false);

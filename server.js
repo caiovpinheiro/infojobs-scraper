@@ -539,14 +539,13 @@ async function createPreview(limit, contractType) {
   const candidates = [];
   const warnings = [];
   let total = 0;
-  let skippedVacancies = 0;
+  let skippedPeople = 0;
   let emptyVacancies = 0;
   let reachedCap = false;
   const cutoff = brTimestamp();
   for (const card of vacancyList.cards) {
     if (candidates.length >= config.maxCandidates) { reachedCap = true; break; }
     const id = card.id;
-    if (dispatched.vacancies.has(String(id))) { skippedVacancies++; continue; }
     try {
       const matchPage = await pandapeGet(`/Company/Match/Matches/${id}`);
       const folders = extractFolders(matchPage);
@@ -569,7 +568,7 @@ async function createPreview(limit, contractType) {
           seen.add(c.idMatch);
           const person = { key: `${id}:${c.idMatch}`, idMatch: c.idMatch, idVacancy: id, nome: c.nome,
             vaga: vacancy.title, tipo: vacancy.type, telefone: null, cep: null, folderId: folders.inscritos };
-          if (alreadyDispatched(person, dispatched)) continue;
+          if (alreadyDispatched(person, dispatched)) { skippedPeople++; continue; }
           fresh.push(person);
           if (candidates.length + fresh.length >= config.maxCandidates) break;
         }
@@ -584,7 +583,7 @@ async function createPreview(limit, contractType) {
   }
   if (reachedCap) warnings.unshift(`A consulta parou em ${config.maxCandidates} pessoas novas. As vagas seguintes não foram abertas.`);
   if (emptyVacancies) warnings.unshift(`${emptyVacancies} vaga(s) aberta(s) não tinham inscritos.`);
-  if (skippedVacancies) warnings.unshift(`${skippedVacancies} vaga(s) já disparada(s) não foram consultadas de novo.`);
+  if (skippedPeople) warnings.unshift(`${skippedPeople} pessoa(s) já disparada(s) ficaram de fora. A vaga continua na busca se ainda houver inscrito novo.`);
   await mapLimited(candidates, 5, async c => {
     try {
       Object.assign(c, extractDetail(await pandapeGet(`/Company/Match/Matches/${c.idVacancy}?idvacancyfolder=${c.folderId}&idMatch=${c.idMatch}`)));
@@ -592,7 +591,7 @@ async function createPreview(limit, contractType) {
   });
   const visible = [];
   for (const candidate of candidates) {
-    if (alreadyDispatched(candidate, dispatched)) continue;
+    if (alreadyDispatched(candidate, dispatched)) { skippedPeople++; continue; }
     candidate.ativado = false;
     visible.push(candidate);
   }
