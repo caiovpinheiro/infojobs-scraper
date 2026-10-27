@@ -466,15 +466,22 @@ function brTimestamp() {
   const get = key => p.find(x => x.type === key).value;
   return `${get('day')}/${get('month')}/${get('year')} ${get('hour')}:${get('minute')}:${get('second')}`;
 }
+function parseMatchList(body) {
+  let data;
+  try { data = JSON.parse(body); } catch { throw new Error('Pandapé não retornou a lista de candidatos em JSON. Verifique o cookie.'); }
+  if (data && typeof data.viewList === 'string') {
+    const candidates = extractCandidates(data.viewList);
+    return { total: typeof data.total === 'number' ? data.total : candidates.length, candidates };
+  }
+  if (data && typeof data.viewNoResults === 'string') return { total: 0, candidates: [] };
+  throw new Error('Formato da lista de candidatos mudou no Pandapé.');
+}
 async function listMatches(vacancyId, folderId, page, size, cutoff) {
   const body = await pandapeForm('/Company/Match/ListMatches', {
     PageNumber: page, PageSize: size, Order: 0, IsLast: 'False', IdVacancy: vacancyId,
     IdVacancyFolder: folderId, MaxDatetimeToLoad: cutoff
   });
-  let data;
-  try { data = JSON.parse(body); } catch { throw new Error('Pandapé não retornou a lista de candidatos em JSON. Verifique o cookie.'); }
-  if (!data || typeof data.total !== 'number' || typeof data.viewList !== 'string') throw new Error('Formato da lista de candidatos mudou no Pandapé.');
-  return { total: data.total, candidates: extractCandidates(data.viewList) };
+  return parseMatchList(body);
 }
 async function resolvedType(card) {
   if (config.vacancyTypes[card.id]) return config.vacancyTypes[card.id];
@@ -533,6 +540,7 @@ async function createPreview(limit, contractType) {
   const warnings = [];
   let total = 0;
   let skippedVacancies = 0;
+  let emptyVacancies = 0;
   let reachedCap = false;
   const cutoff = brTimestamp();
   for (const card of vacancyList.cards) {
@@ -549,6 +557,7 @@ async function createPreview(limit, contractType) {
         catch (error) { warnings.push(`Vaga ${id}: tipo de contrato não lido (${error.message}).`); }
       }
       const first = await listMatches(id, folders.inscritos, 1, 25, cutoff);
+      if (first.total === 0) { emptyVacancies++; continue; }
       const vacancy = { id, title: folders.title || card.title || `Vaga ${id}`, type, total: 0 };
       const seen = new Set();
       const fresh = [];
@@ -574,6 +583,7 @@ async function createPreview(limit, contractType) {
     } catch (error) { warnings.push(`Vaga ${id}: ${error.message}`); }
   }
   if (reachedCap) warnings.unshift(`A consulta parou em ${config.maxCandidates} pessoas novas. As vagas seguintes não foram abertas.`);
+  if (emptyVacancies) warnings.unshift(`${emptyVacancies} vaga(s) aberta(s) não tinham inscritos.`);
   if (skippedVacancies) warnings.unshift(`${skippedVacancies} vaga(s) já disparada(s) não foram consultadas de novo.`);
   await mapLimited(candidates, 5, async c => {
     try {
@@ -983,6 +993,6 @@ if (require.main === module) {
 
 module.exports = {
   extractVacancies, extractVacancyCards, extractFolders, extractContractType, extractCandidates, extractDetail, decodeEntities,
-  getPandapeCookie, resetLoginState, listMatches, canonicalPhone, samePhone, stageIsKnown,
+  getPandapeCookie, resetLoginState, listMatches, parseMatchList, canonicalPhone, samePhone, stageIsKnown,
   createInCrm, resetCrmTargets, DEAL_FIELDS
 };

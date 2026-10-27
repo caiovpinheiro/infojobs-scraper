@@ -384,6 +384,20 @@ test('negócio fora de Ativações não impede criar; negócio nessa etapa é pu
   existingDeal = '';
 });
 
+test('vaga sem inscritos não é erro de formato', () => {
+  const empty = app.parseMatchList(JSON.stringify({
+    url: '/company/match/matches', viewTitle: '\n', viewChips: '', isLast: true,
+    viewNoResults: '<div class="card-noresults">Não há resultados</div>'
+  }));
+  assert.deepEqual(empty, { total: 0, candidates: [] });
+  const listed = app.parseMatchList(JSON.stringify({
+    total: 1, viewList: '<a href="?idMatch=9" data-username="Ana"></a>', isLast: true
+  }));
+  assert.equal(listed.total, 1);
+  assert.equal(listed.candidates[0].idMatch, '9');
+  assert.throws(() => app.parseMatchList('{"ok":true}'), /Formato da lista/);
+});
+
 test('a página e o servidor não carregam segredo nem movem candidato', () => {
   const root = path.join(__dirname, '..');
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
