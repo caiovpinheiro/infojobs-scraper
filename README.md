@@ -41,7 +41,7 @@ Abra `http://localhost:3000`. No Easypanel, informe as variáveis no painel do s
 | `CRM_STAGE_ID` | Etapa na qual novos negócios serão criados |
 | `CRM_TAG_ID` | Tag opcional aplicada a novos negócios |
 | `VACANCY_TYPES_JSON` | Mapa opcional por ID Pandapé, como `{"12345":"CLT","67890":"ESTAGIO"}` |
-| `MAX_VACANCIES`, `MAX_CANDIDATES`, `MAX_IMPORT` | Tetos de leitura e tamanho do lote; padrões 100, 500 e 100 |
+| `MAX_VACANCIES`, `MAX_CANDIDATES`, `MAX_IMPORT` | Tetos de leitura e tamanho do lote; padrões 100, 500 e 100. A página aceita de 1 a 2000 vagas |
 
 O export do workflow comprova somente **nome/ID da vaga, nome/ID da pessoa, telefone e CEP** nos endpoints usados. Não assumi salário, modalidade, e-mail ou descrição, pois o HTML do Pandapé não foi fornecido. O tipo CLT/estágio não aparece no código original; por isso é configurado por ID ou escolhido pelo operador. Se você fornecer um exemplo da resposta de detalhes da vaga, podemos extrair automaticamente os demais campos disponíveis.
 

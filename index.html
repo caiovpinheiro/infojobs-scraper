@@ -69,7 +69,7 @@
   <section class="card" aria-labelledby="accessTitle">
     <h2 id="accessTitle">1. Acessar e consultar</h2>
     <p class="muted">Use o usuário e a senha definidos no servidor. Eles permanecem somente nesta aba.</p>
-    <div class="form-grid"><label>Usuário<input id="username" autocomplete="username"></label><label>Senha<input id="password" type="password" autocomplete="current-password"></label><label>Tipo de contrato<select id="searchType"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Limite de vagas<input id="vacancyLimit" type="number" min="1" max="500" step="1" value="20" inputmode="numeric"></label><button id="loadBtn" class="btn">Buscar inscritos</button></div>
+    <div class="form-grid"><label>Usuário<input id="username" autocomplete="username"></label><label>Senha<input id="password" type="password" autocomplete="current-password"></label><label>Tipo de contrato<select id="searchType"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Limite de vagas<input id="vacancyLimit" type="number" min="1" max="2000" step="1" value="20" inputmode="numeric"></label><button id="loadBtn" class="btn">Buscar inscritos</button></div>
     <div id="loadStatus" class="status" role="status" aria-live="polite"></div>
     <div class="note">A consulta é somente leitura: não move candidatos e não envia WhatsApp. O total mostra todos os inscritos das vagas consultadas; a tabela pode ter um limite de linhas configurado no servidor.</div>
   </section>
@@ -237,7 +237,7 @@
     try {
       const maxVacancies=Number(e.vacancyLimit.value);
       const contractType=e.searchType.value;
-      if(!Number.isInteger(maxVacancies)||maxVacancies<1||maxVacancies>500) throw new Error('Informe um limite de vagas entre 1 e 500 antes de buscar.');
+      if(!Number.isInteger(maxVacancies)||maxVacancies<1||maxVacancies>2000) throw new Error('Informe um limite de vagas entre 1 e 2000 antes de buscar.');
       if(contractType&&contractType!=='CLT'&&contractType!=='ESTAGIO') throw new Error('Escolha CLT, estágio ou todos.');
       const started=await api('/api/preview',{method:'POST',body:JSON.stringify({maxVacancies,contractType})});
       if(!started.jobId) throw new Error('Servidor não retornou o ID da consulta.');

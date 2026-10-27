@@ -30,7 +30,7 @@ const config = {
   crmBase: (process.env.CRM_BASE_URL || 'https://integrations.bwipo.com/api').replace(/\/+$/, ''),
   crmKey: process.env.CRM_API_KEY || '',
   stageId: process.env.CRM_STAGE_ID || '', tagId: process.env.CRM_TAG_ID || '',
-  maxVacancies: bounded(process.env.MAX_VACANCIES, 100, 1, 500),
+  maxVacancies: bounded(process.env.MAX_VACANCIES, 100, 1, 2000),
   maxCandidates: bounded(process.env.MAX_CANDIDATES, 500, 1, 2000),
   maxImport: bounded(process.env.MAX_IMPORT, 100, 1, 500),
   vacancyTypes: parseTypes(process.env.VACANCY_TYPES_JSON || '{}'),
@@ -483,11 +483,12 @@ async function resolvedType(card) {
   catch { return null; }
 }
 async function findVacancyIds(limit, contractType) {
-  const cap = bounded(limit, config.maxVacancies, 1, config.maxVacancies);
+  const cap = bounded(limit, config.maxVacancies, 1, 2000);
   const wanted = contractType === 'CLT' || contractType === 'ESTAGIO' ? contractType : '';
   const byId = new Map();
   let capped = false;
-  for (let page = 1; page <= 10 && byId.size < cap; page++) {
+  const maxPages = 40;
+  for (let page = 1; page <= maxPages && byId.size < cap; page++) {
     const body = await pandapeForm('/Company/Vacancy/ListVacancies', {
       'Pagination[PageNumber]': page, 'Pagination[PageSize]': 100,
       Order: 1, IdsFilter: 0, BeginDate: '', EndDate: '', Geo: 'false'
@@ -504,7 +505,7 @@ async function findVacancyIds(limit, contractType) {
     }
     if (capped || found.length < 100) break;
     if (!wanted && added === 0) break;
-    if (page === 10) capped = true;
+    if (page === maxPages) capped = true;
   }
   if (!byId.size) {
     const qual = wanted === 'ESTAGIO' ? 'de estágio' : wanted === 'CLT' ? 'CLT' : '';
