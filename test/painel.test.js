@@ -15,6 +15,9 @@ let mode = 'ok';
 let cookieBehavior = 'valid';
 let deployed = false;
 let healthDown = 0;
+let crmMode = false;
+let existingDeal = '';
+let conversationMisses = 0;
 let server;
 let base;
 let app;
@@ -44,6 +47,35 @@ before(async () => {
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
       calls.push({ method: req.method, path: url.pathname, search: url.search, auth: req.headers['x-auth-token'] || '', cookie: req.headers.cookie || '', body });
+      if (crmMode) {
+        const json = data => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
+        if (url.pathname === '/pipelines') return json([{ id: 'pipe', name: 'Candidaturas', stages: [{ id: 'etapa-ativacoes', name: 'Ativações' }, { id: 'etapa-entrevista', name: 'Entrevista' }, { id: 'etapa-perdidos', name: 'Perdidos' }] }]);
+        if (url.pathname === '/tags' && req.method === 'GET') return json({ items: [] });
+        if (url.pathname === '/tags' && req.method === 'POST') return json({ id: 'tag-' + JSON.parse(body).name, name: JSON.parse(body).name });
+        if (url.pathname === '/contacts' && req.method === 'GET') return json({ items: [] });
+        if (url.pathname === '/contacts' && req.method === 'POST') return json({ id: 'contact-1', name: 'Pessoa Teste', phone: JSON.parse(body).phone });
+        if (url.pathname === '/deals' && req.method === 'GET') {
+          const status = url.searchParams.get('status');
+          if (status === 'lost' && existingDeal === 'perdido') return json({ items: [{ id: 'deal-perdida', status: 'lost', pipelineId: 'pipe', title: 'Pessoa Teste' }] });
+          if (status) return json({ items: [] });
+          if (existingDeal === 'ativacoes') return json({ items: [{ id: 'deal-antiga', stageId: 'etapa-ativacoes', pipelineId: 'pipe', title: 'Pessoa Teste' }] });
+          if (existingDeal === 'outra') return json({ items: [{ id: 'deal-b2b', stageId: 'etapa-b2b', pipelineId: 'outro', title: 'Outro negócio' }] });
+          if (existingDeal === 'mesma') return json({ items: [{ id: 'deal-entrevista', stageId: 'etapa-entrevista', pipelineId: 'pipe', title: 'Pessoa Teste' }] });
+          if (existingDeal === 'perdidos-etapa') return json({ items: [{ id: 'deal-coluna', stageId: 'etapa-perdidos', pipelineId: 'pipe', title: 'Pessoa Teste' }] });
+          return json({ items: [] });
+        }
+        if (url.pathname === '/deals' && req.method === 'POST') return json({ id: 'deal-1' });
+        if (url.pathname === '/deals/deal-1/custom-fields' && req.method === 'PUT') return json({ ok: true });
+        if (url.pathname === '/deals/deal-1/tags' && req.method === 'POST') return json({ ok: true });
+        if (url.pathname === '/conversations' && req.method === 'GET') {
+          if (conversationMisses > 0) { conversationMisses -= 1; return json({ items: [] }); }
+          return json({ items: [{ id: 'conv-1' }] });
+        }
+        if (url.pathname === '/conversations/conv-1/messages' && req.method === 'POST') {
+          const payload = JSON.parse(body);
+          return json({ id: 'msg-1', isPrivate: payload.isPrivate === true || payload.private === true, content: payload.content });
+        }
+      }
       if (req.method === 'POST' && (url.pathname.startsWith('/contacts') || url.pathname.startsWith('/deals'))) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ message: 'criação não permitida neste teste' }));
@@ -51,6 +83,16 @@ before(async () => {
       }
       if (url.pathname === '/cookie') {
         const force = url.searchParams.get('force');
+        if (cookieBehavior === 'chunks') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ cookie: 'ats-webui=chunks-2', expiresAt: new Date(Date.now() + 3600_000).toISOString() }));
+          return;
+        }
+        if (cookieBehavior === 'force-500' && force) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('falha');
+          return;
+        }
         const expired = cookieBehavior === 'expired-unless-force' ? !force : cookieBehavior === 'expired-until-deploy' ? !deployed : false;
         const cookie = deployed ? 'ats-webui=sessao-pos-deploy' : force ? 'ats-webui=sessao-renovada' : COOKIE;
         const expiresAt = new Date(Date.now() + (expired ? -60_000 : 2 * 60 * 60 * 1000)).toISOString();
@@ -74,6 +116,17 @@ before(async () => {
       if (url.pathname === '/pipelines') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify([{ id: 'pipe', name: 'Candidaturas', stages: [{ id: 'etapa-valida', name: 'Lead de Entrada' }] }]));
+        return;
+      }
+      if (mode === 'not-found-once' && url.pathname.startsWith('/Company/')) {
+        mode = 'ok';
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('nao encontrado');
+        return;
+      }
+      if (mode === 'always-404' && url.pathname.startsWith('/Company/')) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('nao encontrado');
         return;
       }
       if (mode === 'redirect' && url.pathname.startsWith('/Company/')) {
@@ -170,6 +223,24 @@ test('GET /cookie usa X-Auth-Token, respeita expiresAt e renova uma vez', async 
   mode = 'ok';
 });
 
+test('HTTP 404 renova o cookie uma vez e não implanta o login', async () => {
+  calls.length = 0;
+  app.resetLoginState();
+  mode = 'not-found-once';
+  const body = await app.listMatches('10', '77', 1, 25, '22/10/2026 12:00:00');
+  assert.equal(body.total, 30);
+  assert.equal(calls.filter(call => call.path === '/cookie' && call.search === '?force=1').length, 1);
+  assert.equal(calls.filter(call => call.path === '/deploy').length, 0);
+
+  calls.length = 0;
+  app.resetLoginState();
+  mode = 'always-404';
+  await assert.rejects(() => app.listMatches('10', '77', 1, 25, '22/10/2026 12:00:00'), /negou o acesso/);
+  assert.equal(calls.filter(call => call.path === '/cookie' && call.search === '?force=1').length, 1);
+  assert.equal(calls.filter(call => call.path === '/deploy').length, 0);
+  mode = 'ok';
+});
+
 test('cookie vencido renova com force e só implanta se a sessão continuar vencida', async () => {
   calls.length = 0;
   app.resetLoginState();
@@ -260,12 +331,143 @@ test('a consulta lista e conta inscritos sem criar no CRM', async () => {
   }
 });
 
+test('criação grava os campos, a tag e a nota interna da conversa', async () => {
+  calls.length = 0;
+  crmMode = true;
+  existingDeal = '';
+  conversationMisses = 3;
+  process.env.CRM_NOTE_POLL_MS = '15';
+  process.env.CRM_NOTE_WAIT_MS = '5000';
+  app.resetCrmTargets();
+  const result = await app.createInCrm({
+    key: '10:100', nome: 'Pessoa Teste', telefone: '11988887777', cep: '01310-100',
+    endereco: 'Rua A, 10', nascimento: '2000-01-02', idade: 25, curso: 'Administração',
+    localEnsino: 'Escola X', vaga: 'Estágio em RH', tipo: 'ESTAGIO', idVacancy: '10', idMatch: '100'
+  });
+  assert.equal(result.status, 'criado', result.error);
+  const fields = JSON.parse(calls.find(call => call.method === 'PUT' && call.path.endsWith('/custom-fields')).body);
+  const byId = Object.fromEntries(fields.values.map(item => [item.fieldId, item.value]));
+  assert.equal(byId[app.DEAL_FIELDS.nome], 'Pessoa Teste');
+  assert.equal(byId[app.DEAL_FIELDS.telefone], '11988887777');
+  assert.equal(byId[app.DEAL_FIELDS.cep], '01310-100');
+  assert.equal(byId[app.DEAL_FIELDS.endereco], 'Rua A, 10');
+  assert.equal(byId[app.DEAL_FIELDS.nascimento], '2000-01-02');
+  assert.equal(byId[app.DEAL_FIELDS.idade], '25');
+  assert.equal(byId[app.DEAL_FIELDS.tipo], 'Estágio');
+  assert.equal(byId[app.DEAL_FIELDS.titulo], 'Estágio em RH');
+  assert.equal(byId[app.DEAL_FIELDS.curso], 'Administração');
+  assert.equal(byId[app.DEAL_FIELDS.localEnsino], 'Escola X');
+  const tag = calls.find(call => call.method === 'POST' && call.path === '/deals/deal-1/tags');
+  assert.equal(JSON.parse(tag.body).tagId, 'tag-INFOJOBS - ESTÁGIO');
+  const noteCall = calls.find(call => call.method === 'POST' && call.path === '/conversations/conv-1/messages');
+  const note = JSON.parse(noteCall.body);
+  assert.equal(note.private, true);
+  assert.equal(note.isPrivate, true);
+  assert.match(note.content, /Candidato InfoJobs/);
+  assert.match(note.content, /Estágio em RH/);
+  assert.match(note.content, /01310-100/);
+  assert.ok(calls.indexOf(tag) < calls.indexOf(noteCall));
+  assert.equal(calls.filter(call => call.path === '/conversations').length, 4);
+  crmMode = false;
+  existingDeal = '';
+});
+
+test('negócio em outro pipeline não impede criar; no pipeline Candidaturas, inclusive perdido, é pulado', async () => {
+  calls.length = 0;
+  crmMode = true;
+  existingDeal = 'outra';
+  conversationMisses = 0;
+  process.env.CRM_NOTE_POLL_MS = '15';
+  process.env.CRM_NOTE_WAIT_MS = '2000';
+  app.resetCrmTargets();
+  const person = {
+    key: '10:100', nome: 'Pessoa Teste', telefone: '11988887777', cep: '01310-100',
+    vaga: 'Operador de Caixa', tipo: 'CLT', idVacancy: '10', idMatch: '100'
+  };
+  const created = await app.createInCrm(person);
+  assert.equal(created.status, 'criado', created.error);
+  assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 1);
+
+  calls.length = 0;
+  app.resetCrmTargets();
+  existingDeal = 'ativacoes';
+  const skipped = await app.createInCrm(person);
+  assert.equal(skipped.status, 'ja_existe');
+  assert.equal(skipped.dealId, 'deal-antiga');
+  assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 0);
+
+  calls.length = 0;
+  app.resetCrmTargets();
+  existingDeal = 'mesma';
+  const samePipeline = await app.createInCrm(person);
+  assert.equal(samePipeline.status, 'ja_existe');
+  assert.equal(samePipeline.dealId, 'deal-entrevista');
+  assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 0);
+
+  calls.length = 0;
+  app.resetCrmTargets();
+  existingDeal = 'perdidos-etapa';
+  const lostColumn = await app.createInCrm(person);
+  assert.equal(lostColumn.status, 'ja_existe');
+  assert.equal(lostColumn.dealId, 'deal-coluna');
+
+  calls.length = 0;
+  app.resetCrmTargets();
+  existingDeal = 'perdido';
+  const lost = await app.createInCrm(person);
+  assert.equal(lost.status, 'ja_existe');
+  assert.equal(lost.dealId, 'deal-perdida');
+  assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 0);
+  assert.ok(calls.some(call => call.method === 'GET' && call.path === '/deals' && call.search.includes('status=lost')));
+  crmMode = false;
+  existingDeal = '';
+});
+
+test('HTTP 500 ao forçar o login reaproveita o cookie em cache', async () => {
+  calls.length = 0;
+  app.resetLoginState();
+  cookieBehavior = 'valid';
+  assert.equal(await app.getPandapeCookie(false), COOKIE);
+  cookieBehavior = 'force-500';
+  assert.equal(await app.getPandapeCookie(true), COOKIE);
+  assert.ok(calls.some(call => call.path === '/cookie' && call.search === '?force=1'));
+  assert.ok(calls.some(call => call.path === '/cookie' && call.search === ''));
+  cookieBehavior = 'valid';
+});
+
+test('cookie dividido sem as partes não dispara deploy', async () => {
+  calls.length = 0;
+  app.resetLoginState();
+  cookieBehavior = 'chunks';
+  await assert.rejects(() => app.getPandapeCookie(false), /sessão incompleta/);
+  assert.equal(calls.filter(call => call.path === '/deploy').length, 0);
+  assert.equal(app.assembleAtsCookie('ats-webui=chunks-2; ats-webuiC1=aaa; ats-webuiC2=bbb'), 'ats-webui=aaabbb');
+  assert.equal(app.assembleAtsCookie('ats-webui=sessao-de-teste'), 'ats-webui=sessao-de-teste');
+  cookieBehavior = 'valid';
+});
+
+test('vaga sem inscritos não é erro de formato', () => {
+  const empty = app.parseMatchList(JSON.stringify({
+    url: '/company/match/matches', viewTitle: '\n', viewChips: '', isLast: true,
+    viewNoResults: '<div class="card-noresults">Não há resultados</div>'
+  }));
+  assert.deepEqual(empty, { total: 0, candidates: [] });
+  const listed = app.parseMatchList(JSON.stringify({
+    total: 1, viewList: '<a href="?idMatch=9" data-username="Ana"></a>', isLast: true
+  }));
+  assert.equal(listed.total, 1);
+  assert.equal(listed.candidates[0].idMatch, '9');
+  assert.throws(() => app.parseMatchList('{"ok":true}'), /Formato da lista/);
+});
+
 test('a página e o servidor não carregam segredo nem movem candidato', () => {
   const root = path.join(__dirname, '..');
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const source = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   assert.match(html, /Selecionar primeiras/);
+  assert.match(html, /A busca não traz pessoa que já foi disparada/);
   assert.match(html, /Confirmar criação no CRM/);
+  assert.match(source, /'MISTO'/);
   assert.equal(source.includes('MoveToFolder'), false);
   assert.equal(source.includes('discord.com'), false);
   assert.equal(source.includes('graph.facebook.com'), false);

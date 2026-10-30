@@ -41,7 +41,7 @@ Abra `http://localhost:3000`. No Easypanel, informe as variáveis no painel do s
 | `CRM_STAGE_ID` | Etapa na qual novos negócios serão criados |
 | `CRM_TAG_ID` | Tag opcional aplicada a novos negócios |
 | `VACANCY_TYPES_JSON` | Mapa opcional por ID Pandapé, como `{"12345":"CLT","67890":"ESTAGIO"}` |
-| `MAX_VACANCIES`, `MAX_CANDIDATES`, `MAX_IMPORT` | Tetos de leitura e tamanho do lote; padrões 100, 500 e 100 |
+| `MAX_VACANCIES`, `MAX_CANDIDATES`, `MAX_IMPORT` | Tetos de leitura e tamanho do lote; padrões 100, 500 e 100. A página aceita de 1 a 2000 vagas |
 
 O export do workflow comprova somente **nome/ID da vaga, nome/ID da pessoa, telefone e CEP** nos endpoints usados. Não assumi salário, modalidade, e-mail ou descrição, pois o HTML do Pandapé não foi fornecido. O tipo CLT/estágio não aparece no código original; por isso é configurado por ID ou escolhido pelo operador. Se você fornecer um exemplo da resposta de detalhes da vaga, podemos extrair automaticamente os demais campos disponíveis.
 
@@ -66,5 +66,5 @@ Deixe `PANDAPE_EMAIL`, `PANDAPE_PASSWORD`, `TITAN_EMAIL`, `TITAN_PASSWORD` e `AU
 - O Pandapé é lido por endpoints e HTML internos observados no workflow. Se o formato da plataforma mudar, os seletores do `server.js` terão de ser ajustados. Se o `pandape-login` não conseguir autenticar ou a alternativa manual vencer, a consulta falha.
 - O estado da prévia e dos lotes fica **em memória por instância**. Reiniciar o serviço durante um lote perde o acompanhamento na página; confira o CRM antes de repetir. Para produção com vários operadores ou instâncias, migre esse estado e a idempotência para PostgreSQL/Supabase.
 - A prévia vale por 15 minutos. As vagas consultadas são limitadas por `MAX_VACANCIES`, e a tabela por `MAX_CANDIDATES`. Se houver mais inscritos que linhas, a interface mostra os dois números separadamente.
-- A verificação de duplicidade segue o comando `/infojobs-teste`: **qualquer negócio** encontrado para o contato faz a pessoa ser pulada. Podemos mudar isso para verificar apenas negócio aberto quando você definir a regra desejada.
+- A verificação de duplicidade pula quem já tem negócio no pipeline Candidaturas, em qualquer etapa, inclusive perdido. Um negócio perdido também conta mesmo que a lista padrão do CRM não o devolva. Negócio aberto em outro pipeline não impede a criação.
 - O JSON original do n8n contém cookie do Pandapé, chave do CRM, token da Meta e webhook do Discord embutidos. Renove esses segredos antes de reutilizá-los e mantenha-os fora do repositório.

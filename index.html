@@ -10,6 +10,8 @@
     button { cursor:pointer; } button:disabled { opacity:.48; cursor:not-allowed; }
     .shell { max-width:1240px; margin:auto; padding:35px 22px 70px; }
     header { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:25px; }
+    .back { display:inline-flex; align-items:center; gap:6px; margin:0 0 14px; color:#17699f; font-size:13px; font-weight:750; text-decoration:none; }
+    .back:hover { text-decoration:underline; }
     .eyebrow { color:#2473a9; font-size:12px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
     h1 { font-size:clamp(29px,4vw,42px); letter-spacing:-.045em; margin:8px 0; line-height:1.12; }
     h2 { font-size:19px; letter-spacing:-.02em; margin:0 0 5px; }
@@ -18,8 +20,9 @@
     .badge.live { background:#e0f5e8; color:#186249; }
     .card { background:#fff; border:1px solid #e1e8ef; border-radius:16px; box-shadow:0 8px 25px rgba(14,44,66,.04); padding:21px; margin:0 0 16px; }
     .row { display:flex; align-items:center; justify-content:space-between; gap:14px; } .row.wrap { flex-wrap:wrap; }
-    .form-grid { display:grid; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px; margin-top:18px; }
-    .controls { display:grid; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px; margin:20px 0 14px; }
+    .form-grid { display:grid; grid-template-columns:1fr 1fr 160px 130px auto; align-items:end; gap:12px; margin-top:18px; }
+    .controls { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin:20px 0 14px; }
+    .controls label { flex:1 1 160px; } .controls .btn { flex:0 0 auto; }
     label { display:grid; gap:6px; font-size:12px; font-weight:750; color:#4b6074; }
     input,select { width:100%; min-height:42px; border:1px solid #cbd8e4; background:#fff; color:#1e3042; border-radius:9px; padding:8px 10px; }
     input[type="checkbox"] { width:16px; height:16px; min-height:0; accent-color:#1c6da6; }
@@ -44,6 +47,11 @@
     .empty { padding:32px; text-align:center; color:#738596; }
     .hidden { display:none !important; } .compact-select { width:auto; min-width:125px; font-size:12px; }
     .split { display:flex; flex-wrap:wrap; gap:15px; align-items:center; } .split .muted { max-width:800px; }
+    .pager { display:flex; gap:8px; align-items:center; justify-content:flex-end; margin-top:12px; }
+    .pager button:disabled { opacity:.45; }
+    .tabs { display:flex; gap:8px; margin:0 0 16px; }
+    .tab { border:1px solid #d5e1eb; background:#fff; color:#3d5870; border-radius:999px; padding:8px 14px; font-weight:750; }
+    .tab.on { background:#153f68; color:#fff; border-color:#153f68; }
     .progress { height:7px; background:#e3eaf1; border-radius:10px; overflow:hidden; margin-top:14px; }
     .progress > span { display:block; height:100%; background:#2084b5; width:0; transition:width .25s; }
     dialog { border:0; border-radius:17px; max-width:min(500px,calc(100vw - 28px)); width:100%; padding:26px; box-shadow:0 24px 80px rgba(16,38,60,.28); }
@@ -53,12 +61,15 @@
 </head>
 <body>
 <main class="shell">
+  <a class="back" href="https://dnaworkia-candidaturas.vkfaze.easypanel.host/">← Voltar</a>
   <header><div><div class="eyebrow">DNA Work · Operação</div><h1>Pandapé → Bwipo CRM</h1><p class="muted">Veja os inscritos e suas vagas. Você decide quem entra no CRM.</p></div><span id="badge" class="badge">Aguardando acesso</span></header>
+  <nav class="tabs" aria-label="Seções"><button type="button" id="tabConsulta" class="tab on">Consulta</button><button type="button" id="tabAtivacoes" class="tab">Ativações</button></nav>
+  <div id="paneConsulta">
 
   <section class="card" aria-labelledby="accessTitle">
     <h2 id="accessTitle">1. Acessar e consultar</h2>
     <p class="muted">Use o usuário e a senha definidos no servidor. Eles permanecem somente nesta aba.</p>
-    <div class="form-grid"><label>Usuário<input id="username" autocomplete="username"></label><label>Senha<input id="password" type="password" autocomplete="current-password"></label><button id="loadBtn" class="btn">Buscar inscritos</button></div>
+    <div class="form-grid"><label>Usuário<input id="username" autocomplete="username"></label><label>Senha<input id="password" type="password" autocomplete="current-password"></label><label>Tipo de contrato<select id="searchType"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Limite de vagas<input id="vacancyLimit" type="number" min="1" max="2000" step="1" value="20" inputmode="numeric"></label><button id="loadBtn" class="btn">Buscar inscritos</button></div>
     <div id="loadStatus" class="status" role="status" aria-live="polite"></div>
     <div class="note">A consulta é somente leitura: não move candidatos e não envia WhatsApp. O total mostra todos os inscritos das vagas consultadas; a tabela pode ter um limite de linhas configurado no servidor.</div>
   </section>
@@ -68,30 +79,43 @@
     <div id="metrics" class="metrics"></div>
     <div id="warnings" class="status"></div>
     <div class="table-wrap"><table><thead><tr><th>Vaga</th><th>ID Pandapé</th><th>Inscritos</th><th>Tipo de contrato</th></tr></thead><tbody id="vacancyRows"></tbody></table></div>
-    <p class="muted" style="margin-top:12px">Se uma vaga não vier classificada, escolha CLT ou estágio na linha dela. A classificação vale para esta consulta; o administrador pode fixá-la no servidor.</p>
+    <p class="muted" style="margin-top:12px">O tipo vem da etiqueta #CLT ou #Estágio e, se ela não existir, do campo Tipo de contrato da vaga. A escolha manual só aparece quando nenhum dos dois define o tipo.</p>
   </section>
 
   <section id="peopleSection" class="card hidden" aria-labelledby="peopleTitle">
-    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">A seleção é individual. Você também pode marcar as primeiras pessoas do tipo escolhido.</p></div><button id="clearBtn" class="minor">Limpar seleção</button></div>
-    <div class="controls"><label>Tipo de vaga<select id="typeFilter"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade para selecionar<input id="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex.: 20"></label><button id="selectFirstBtn" class="btn alt" disabled>Selecionar primeiras</button></div>
+    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">A busca não traz pessoa que já foi disparada. Vaga que voltou a ficar ativa entra de novo, só com inscrito novo. Selecionar todos marca todas as pessoas desta consulta, em todas as páginas. CLT e estágio podem ir no mesmo lote.</p></div><button id="clearBtn" class="minor" type="button">Limpar seleção</button></div>
+    <div class="controls"><label>Tipo de vaga<select id="typeFilter"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade para selecionar<input id="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex.: 20"></label><button id="selectFirstBtn" class="btn alt" type="button" disabled>Selecionar primeiras</button><button id="selectPageBtn" class="btn alt" type="button" disabled>Selecionar página</button><button id="selectAllBtn" class="btn alt" type="button" disabled>Selecionar todos</button></div>
     <div class="split"><p id="selection" class="muted"></p><p id="tableCount" class="muted"></p></div>
-    <div class="table-wrap"><table><thead><tr><th>Escolher</th><th>Candidato</th><th>Telefone</th><th>CEP</th><th>Vaga</th><th>Tipo</th></tr></thead><tbody id="candidateRows"></tbody></table></div>
-    <div class="row wrap" style="margin-top:18px"><p class="muted">Criar no CRM: contato (se necessário), negócio, nota com vaga e tag configurada. Negócios já existentes são pulados.</p><button id="reviewBtn" class="btn danger" disabled>Revisar criação no CRM</button></div>
+    <div class="table-wrap"><table><thead><tr><th><input id="pageCheck" type="checkbox" aria-label="Selecionar as pessoas desta página"></th><th>Candidato</th><th>Telefone</th><th>CEP</th><th>Vaga</th><th>Tipo</th></tr></thead><tbody id="candidateRows"></tbody></table></div>
+    <div class="pager"><button id="pagePrev" class="minor" type="button">Anterior</button><span id="pageLabel" class="muted"></span><button id="pageNext" class="minor" type="button">Próxima</button></div>
+    <div class="row wrap" style="margin-top:18px"><p class="muted">Criar no CRM: contato, negócio na etapa Ativações, nota interna e tag. Quem já está nessa etapa é pulado. Negócio em outra etapa não impede a criação.</p><button id="reviewBtn" class="btn danger" type="button" disabled>Revisar criação no CRM</button></div>
     <div id="jobStatus" class="status" role="status" aria-live="polite"></div><div id="progress" class="progress hidden"><span id="progressBar"></span></div>
     <div id="results" class="table-wrap hidden"><table><thead><tr><th>Pessoa</th><th>Resultado</th><th>Contato</th><th>Negócio</th></tr></thead><tbody id="resultRows"></tbody></table></div>
+    <div class="row wrap" style="margin-top:12px"><button id="retryErrorsBtn" class="btn alt hidden" type="button">Tentar de novo quem deu erro</button></div>
   </section>
-</main>
+  </div>
+  <section id="paneAtivacoes" class="card hidden" aria-labelledby="activationsTitle">
+    <div class="row wrap"><div><h2 id="activationsTitle">Pessoas ativadas</h2><p class="muted">Quem entrou no CRM nesta operação, da mais recente para a mais antiga.</p></div><button id="activationsRefresh" class="minor" type="button">Atualizar</button></div>
+    <div id="activationsStatus" class="status" role="status"></div>
+    <div class="table-wrap"><table><thead><tr><th>Quando</th><th>Nome</th><th>Telefone</th><th>CEP</th><th>Vaga</th><th>Tipo</th><th>Negócio</th></tr></thead><tbody id="activationRows"></tbody></table></div>
+    <div class="pager"><button id="activationPrev" class="minor" type="button">Anterior</button><span id="activationLabel" class="muted"></span><button id="activationNext" class="minor" type="button">Próxima</button></div>
+  </section>
 
 <dialog id="confirmDialog" aria-labelledby="confirmTitle"><h2 id="confirmTitle">Confirmar criação no CRM</h2><p id="confirmText"></p><p class="muted">Antes de criar, o servidor verifica novamente se cada pessoa ainda está em Inscritos. Esta ação não move ninguém no Pandapé e não envia mensagens.</p><div class="row"><button id="cancelBtn" class="btn alt">Cancelar</button><button id="confirmBtn" class="btn danger">Criar no CRM</button></div></dialog>
+</main>
 
 <script>
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const e = Object.fromEntries(['username','password','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn'].map(id => [id,$(id)]));
+  const e = Object.fromEntries(['username','password','searchType','vacancyLimit','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selectPageBtn','selectAllBtn','pageCheck','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn','pagePrev','pageNext','pageLabel','tabConsulta','tabAtivacoes','paneConsulta','paneAtivacoes','activationsRefresh','activationsStatus','activationRows','activationPrev','activationNext','activationLabel','retryErrorsBtn'].map(id => [id,$(id)]));
+  let activationPage = 1;
+  let retryKeys = [];
+  const PAGE_SIZE = 25;
   let snapshot = null;
   let classification = {};
   let selected = new Set();
+  let peoplePage = 1;
   let busy = false;
   let requestId = null;
   let lastSelection = '';
@@ -104,9 +128,30 @@
     return 'Basic '+btoa(binary);
   }
   async function api(url, options={}) {
-    const response=await fetch(url,{ ...options, headers:{ Authorization:auth(), ...(options.body?{'Content-Type':'application/json'}:{}) }, credentials:'omit', cache:'no-store' });
+    const retry = options.retry || 0;
+    const request = { ...options };
+    delete request.retry;
+    const method = request.method || 'GET';
+    const canRetry = method === 'GET' || (method === 'POST' && url === '/api/preview');
+    let response;
+    try {
+      response=await fetch(url,{ ...request, headers:{ Authorization:auth(), ...(request.body?{'Content-Type':'application/json'}:{}) }, credentials:'omit', cache:'no-store' });
+    } catch (error) {
+      if (canRetry && retry < 4) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return api(url, { ...request, retry: retry + 1 });
+      }
+      throw new Error('O servidor não respondeu. Tente a busca de novo em instantes.');
+    }
     const data=await response.json().catch(()=>null);
-    if (!response.ok) throw new Error(data?.error || `Falha HTTP ${response.status}.`);
+    if (!response.ok) {
+      const gateway = response.status === 502 || response.status === 503 || response.status === 504;
+      if (gateway && canRetry && retry < 4) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return api(url, { ...request, retry: retry + 1 });
+      }
+      throw new Error(data?.error || (gateway ? `O servidor não respondeu (HTTP ${response.status}). Tente a busca de novo em instantes.` : `Falha HTTP ${response.status}.`));
+    }
     return data;
   }
   function typeOf(candidate) { return snapshot.vacancies.find(v=>v.id===candidate.idVacancy)?.type || classification[candidate.idVacancy] || null; }
@@ -127,39 +172,74 @@
       row.append(td); e.vacancyRows.append(row);
     }
   }
+  function filteredPeople() {
+    const type=e.typeFilter.value;
+    return snapshot.candidates.filter(c=>!type||typeOf(c)===type);
+  }
+  function selectablePeople() {
+    return filteredPeople().filter(c=>typeOf(c)&&!c.ativado);
+  }
+  function selectedTypes() {
+    return [...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key)));
+  }
   function renderPeople() {
     if (!snapshot) return;
-    const type=e.typeFilter.value;
-    const visible=snapshot.candidates.filter(c=>!type||typeOf(c)===type);
+    const visible=filteredPeople();
+    const pages=Math.max(1, Math.ceil(visible.length/PAGE_SIZE));
+    if (peoplePage>pages) peoplePage=pages;
+    if (peoplePage<1) peoplePage=1;
+    const start=(peoplePage-1)*PAGE_SIZE;
+    const pageItems=visible.slice(start, start+PAGE_SIZE);
     e.candidateRows.replaceChildren();
     if (!visible.length) { const row=document.createElement('tr'),td=cell(row,'Nenhuma pessoa com esse filtro.'); td.colSpan=6; td.className='empty'; e.candidateRows.append(row); }
-    for (const c of visible) {
+    for (const c of pageItems) {
       const row=document.createElement('tr'), td=document.createElement('td'), box=document.createElement('input');
-      box.type='checkbox'; box.checked=selected.has(c.key); box.disabled=!typeOf(c)||busy; box.setAttribute('aria-label','Selecionar '+c.nome);
+      box.type='checkbox'; box.checked=selected.has(c.key)&&!c.ativado; box.disabled=!typeOf(c)||c.ativado||busy; box.setAttribute('aria-label','Selecionar '+c.nome);
       box.addEventListener('change',()=>{ if(box.checked) selected.add(c.key); else selected.delete(c.key); updateSelection(); });
       td.append(box); row.append(td);
-      const name=cell(row,c.nome),small=document.createElement('div'); small.className='subline'; small.textContent='Match '+c.idMatch+(c.detailError?' · detalhes indisponíveis':''); name.append(small);
+      const name=cell(row,c.nome),small=document.createElement('div'); small.className='subline'; small.textContent='Match '+c.idMatch+(c.ativado?' · Já ativado':'')+(c.detailError?' · detalhes indisponíveis':''); name.append(small);
       cell(row,c.telefone||'Não encontrado'); cell(row,c.cep||'—'); cell(row,c.vaga);
       const typeCell=document.createElement('td'),pill=document.createElement('span'),category=typeOf(c); pill.className='pill'+(category==='ESTAGIO'?' stage':!category?' unknown':''); pill.textContent=category==='ESTAGIO'?'Estágio':category||'Classificar vaga'; typeCell.append(pill); row.append(typeCell);
       e.candidateRows.append(row);
     }
-    e.tableCount.textContent=`${visible.length} pessoa(s) mostradas nesta consulta.`;
+    const pageKeys=pageItems.filter(c=>typeOf(c)&&!c.ativado).map(c=>c.key);
+    const marked=pageKeys.filter(key=>selected.has(key)).length;
+    e.pageCheck.checked=pageKeys.length>0&&marked===pageKeys.length;
+    e.pageCheck.indeterminate=marked>0&&marked<pageKeys.length;
+    e.pageCheck.disabled=!pageKeys.length||busy;
+    e.pageLabel.textContent=visible.length?`${start+1}–${start+pageItems.length} de ${visible.length} · página ${peoplePage} de ${pages}`:'Nenhuma pessoa';
+    e.pagePrev.disabled=peoplePage<=1;
+    e.pageNext.disabled=peoplePage>=pages;
+    e.tableCount.textContent=`${visible.length} pessoa(s) nesta consulta.`;
     updateSelection();
   }
   function updateSelection() {
     if (!snapshot) return;
-    const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))).filter(Boolean))];
-    const n=Number(e.quantity.value), available=snapshot.candidates.filter(c=>typeOf(c)===e.typeFilter.value).length;
-    e.selectFirstBtn.disabled=busy||!e.typeFilter.value||!Number.isInteger(n)||n<1||n>available||n>snapshot.maxImport;
-    e.reviewBtn.disabled=busy||selected.size===0||selected.size>snapshot.maxImport||types.length!==1;
-    e.selection.textContent=`${selected.size} selecionado(s) · máximo ${snapshot.maxImport} por lote`+(types.length>1?' · selecione apenas uma categoria por lote':'')+'.';
-    e.quantity.max=String(Math.min(available,snapshot.maxImport));
+    const types=selectedTypes();
+    const known=types.filter(type=>type==='CLT'||type==='ESTAGIO');
+    const clt=known.filter(type=>type==='CLT').length;
+    const estagio=known.filter(type=>type==='ESTAGIO').length;
+    const ready=!busy&&selected.size>0&&known.length===selected.size;
+    const n=Number(e.quantity.value), available=snapshot.candidates.filter(c=>typeOf(c)===e.typeFilter.value&&!c.ativado).length;
+    const already=filteredPeople().filter(c=>c.ativado).length;
+    const canSelect=selectablePeople().length>0&&!busy;
+    e.selectPageBtn.disabled=!canSelect;
+    e.selectAllBtn.disabled=!canSelect;
+    e.selectFirstBtn.disabled=busy||!e.typeFilter.value||!Number.isInteger(n)||n<1||n>available;
+    e.reviewBtn.disabled=!ready;
+    const mix=clt&&estagio?` · ${clt} CLT e ${estagio} estágio`:'';
+    e.selection.textContent=`${selected.size} selecionado(s) de ${selectablePeople().length} disponível(is)`+(already?` · ${already} já ativado(s) ficam de fora`:'')+mix+'.';
+    e.quantity.max=String(available);
   }
   async function load() {
     if (busy) return; busy=true; e.loadBtn.disabled=true; e.refreshBtn.disabled=true;
     message(e.loadStatus,'Consultando vagas, inscritos e detalhes no Pandapé. Isso pode levar alguns minutos…');
     try {
-      const started=await api('/api/preview',{method:'POST'});
+      const maxVacancies=Number(e.vacancyLimit.value);
+      const contractType=e.searchType.value;
+      if(!Number.isInteger(maxVacancies)||maxVacancies<1||maxVacancies>2000) throw new Error('Informe um limite de vagas entre 1 e 2000 antes de buscar.');
+      if(contractType&&contractType!=='CLT'&&contractType!=='ESTAGIO') throw new Error('Escolha CLT, estágio ou todos.');
+      const started=await api('/api/preview',{method:'POST',body:JSON.stringify({maxVacancies,contractType})});
       if(!started.jobId) throw new Error('Servidor não retornou o ID da consulta.');
       let job;
       do {
@@ -169,11 +249,13 @@
       } while(job.status==='running');
       const data=job.result;
       if(!Array.isArray(data.candidates)||!Array.isArray(data.vacancies)||!data.snapshotId) throw new Error('Resposta inesperada do servidor.');
-      snapshot=data; classification={}; selected.clear(); requestId=null;
+      snapshot=data; classification={}; selected.clear(); peoplePage=1; requestId=null;
       e.previewSection.classList.remove('hidden'); e.peopleSection.classList.remove('hidden');
       e.metrics.replaceChildren(); metric(data.total,'Inscritos nas vagas consultadas'); metric(data.listed,'Pessoas na tabela'); metric(data.vacancies.length,'Vagas encontradas'); metric(data.vacancies.filter(v=>!v.type).length,'Vagas a classificar');
-      e.freshness.textContent='Consulta feita em '+new Date().toLocaleString('pt-BR')+' · válida por 15 minutos.';
-      message(e.warnings,[data.truncated?'Lista limitada pelo teto configurado no servidor.':'',...(data.warnings||[]).slice(0,5)].filter(Boolean).join('\n'));
+      const tipoBusca=data.contractType==='ESTAGIO'?'estágio':data.contractType==='CLT'?'CLT':'todos os tipos';
+      e.freshness.textContent='Consulta de '+tipoBusca+' feita em '+new Date().toLocaleString('pt-BR')+' · válida por 15 minutos.';
+      if(data.contractType) e.typeFilter.value=data.contractType;
+      message(e.warnings,[data.truncated?`Lista limitada a ${data.vacancyLimit||maxVacancies} vaga(s).`:'',...(data.warnings||[]).slice(0,5)].filter(Boolean).join('\n'));
       message(e.loadStatus,'Consulta concluída. Nenhuma alteração feita no Pandapé ou CRM.');
       e.badge.textContent='Conectado'; e.badge.classList.add('live');
       e.results.classList.add('hidden'); message(e.jobStatus,''); renderVacancies(); renderPeople();
@@ -185,45 +267,125 @@
       const job=await api('/api/import/'+encodeURIComponent(jobId));
       const pct=job.total?Math.round(job.processed/job.total*100):0;
       e.progressBar.style.width=pct+'%';
-      message(e.jobStatus,`Lote ${job.id}: ${job.processed}/${job.total} processados · ${job.created} criados · ${job.existing} já existentes · ${job.skipped} pulados · ${job.partial} parciais · ${job.errors} erros.`+(job.error?' '+job.error:''),job.status==='failed');
+      const skip=job.skip||{};
+      const reasons=[skip.sem_telefone&&`${skip.sem_telefone} sem telefone`, skip.nao_inscrito&&`${skip.nao_inscrito} fora de Inscritos`, skip.telefone_repetido&&`${skip.telefone_repetido} telefone repetido`, skip.ja_ativado&&`${skip.ja_ativado} já ativados`].filter(Boolean).join(', ');
+      message(e.jobStatus,`Lote ${job.id}: ${job.processed}/${job.total} processados · ${job.created} criados · ${job.existing} já no CRM · ${job.skipped} pulados · ${job.partial} parciais · ${job.errors} erros.`+(reasons?` Pulados: ${reasons}.`:'')+(job.error?' '+job.error:''),job.status==='failed');
       if(job.status==='running') return setTimeout(()=>poll(jobId),2500);
       e.resultRows.replaceChildren();
       for(const item of job.results||[]) { const row=document.createElement('tr'); cell(row,item.nome); cell(row,item.status+(item.error?' · '+item.error:'')); cell(row,item.contactId); cell(row,item.dealId); e.resultRows.append(row); }
       e.results.classList.remove('hidden'); busy=false; e.loadBtn.disabled=false; e.refreshBtn.disabled=false; renderPeople();
       e.confirmBtn.disabled=false;
-      if(job.status==='completed') { selected.clear(); snapshot=null; e.reviewBtn.disabled=true; e.selection.textContent='Atualize a consulta antes de criar outro lote.'; }
+      retryKeys=(job.results||[]).filter(item=>item.status==='erro'&&item.key).map(item=>item.key);
+      const uniqueRetry=[...new Set(retryKeys)];
+      retryKeys=uniqueRetry;
+      e.retryErrorsBtn.classList.toggle('hidden', !retryKeys.length || !snapshot);
+      e.retryErrorsBtn.textContent=retryKeys.length?`Tentar de novo quem deu erro (${retryKeys.length})`:'Tentar de novo quem deu erro';
+      if(job.status==='completed' && !retryKeys.length) { selected.clear(); snapshot=null; e.reviewBtn.disabled=true; e.selection.textContent='Atualize a consulta antes de criar outro lote.'; }
+      else if(retryKeys.length) e.selection.textContent=`${retryKeys.length} pessoa(s) falharam. Use o botão abaixo para tentar só essas, sem buscar de novo.`;
     } catch(error) { message(e.jobStatus,`Não foi possível acompanhar o lote ${jobId}: ${error.message}. Consulte os logs antes de repetir.`,true); busy=false; e.loadBtn.disabled=false; e.refreshBtn.disabled=false; renderPeople(); }
   }
   async function create() {
     if (busy||!snapshot||!selected.size) return;
-    const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))))];
-    if(types.length!==1||!types[0]) return;
-    const signature=snapshot.snapshotId+':'+types[0]+':'+[...selected].sort().join(',');
+    const types=[...new Set(selectedTypes())];
+    if(!types.length||types.some(type=>type!=='CLT'&&type!=='ESTAGIO')) return;
+    const lote=types.length===1?types[0]:'MISTO';
+    const signature=snapshot.snapshotId+':'+lote+':'+[...selected].sort().join(',');
     if(signature!==lastSelection) { requestId=crypto.randomUUID(); lastSelection=signature; }
     busy=true; e.confirmBtn.disabled=true; e.loadBtn.disabled=true; e.refreshBtn.disabled=true; e.confirmDialog.close(); renderPeople();
     message(e.jobStatus,'Iniciando a criação dos registros no CRM…'); e.progress.classList.remove('hidden'); e.progressBar.style.width='0%';
     try {
-      const response=await api('/api/import',{method:'POST',body:JSON.stringify({snapshotId:snapshot.snapshotId,keys:[...selected],tipo:types[0],classifications:classification,requestId})});
+      const response=await api('/api/import',{method:'POST',body:JSON.stringify({snapshotId:snapshot.snapshotId,keys:[...selected],tipo:lote,classifications:classification,requestId})});
       if(!response.jobId) throw new Error('Servidor não retornou o ID do lote.');
       poll(response.jobId);
     } catch(error) { message(e.jobStatus,error.message+' Confira o servidor antes de repetir.',true); busy=false; e.loadBtn.disabled=false; e.refreshBtn.disabled=false; e.confirmBtn.disabled=false; renderPeople(); }
   }
   e.loadBtn.addEventListener('click',load); e.refreshBtn.addEventListener('click',load);
-  e.typeFilter.addEventListener('change',()=>{ selected.clear(); renderPeople(); });
+  e.typeFilter.addEventListener('change',()=>{ selected.clear(); peoplePage=1; renderPeople(); });
   e.quantity.addEventListener('input',updateSelection);
   e.clearBtn.addEventListener('click',()=>{ selected.clear(); renderPeople(); });
+  e.pagePrev.addEventListener('click',()=>{ peoplePage-=1; renderPeople(); });
+  e.pageNext.addEventListener('click',()=>{ peoplePage+=1; renderPeople(); });
+  function setPageSelection(mark) {
+    const visible=filteredPeople();
+    const start=(peoplePage-1)*PAGE_SIZE;
+    for (const c of visible.slice(start, start+PAGE_SIZE)) {
+      if (!typeOf(c)) continue;
+      if (mark && !c.ativado) selected.add(c.key);
+      else selected.delete(c.key);
+    }
+    renderPeople();
+  }
+  e.pageCheck.addEventListener('change',()=>setPageSelection(e.pageCheck.checked));
+  e.selectPageBtn.addEventListener('click',()=>setPageSelection(true));
+  e.selectAllBtn.addEventListener('click',()=>{
+    const pool=selectablePeople();
+    selected=new Set(pool.map(c=>c.key));
+    renderPeople();
+  });
   e.selectFirstBtn.addEventListener('click',()=>{
     const n=Number(e.quantity.value), type=e.typeFilter.value;
     if(!type||!Number.isInteger(n)||n<1) return;
-    selected=new Set(snapshot.candidates.filter(c=>typeOf(c)===type).slice(0,n).map(c=>c.key)); renderPeople();
+    selected=new Set(snapshot.candidates.filter(c=>typeOf(c)===type&&!c.ativado).slice(0,n).map(c=>c.key)); renderPeople();
   });
   e.reviewBtn.addEventListener('click',()=>{
-    const types=[...new Set([...selected].map(key=>typeOf(snapshot.candidates.find(c=>c.key===key))))];
-    if(types.length!==1||!types[0]) return;
-    e.confirmText.textContent=`Criar até ${selected.size} pessoa(s) de vagas ${types[0]==='ESTAGIO'?'de estágio':'CLT'} no Bwipo CRM? Registros já existentes serão pulados.`;
+    const types=[...new Set(selectedTypes())];
+    if(!types.length||types.some(type=>type!=='CLT'&&type!=='ESTAGIO')) return;
+    const clt=[...selected].filter(key=>typeOf(snapshot.candidates.find(c=>c.key===key))==='CLT').length;
+    const estagio=selected.size-clt;
+    const qual=types.length===1?(types[0]==='ESTAGIO'?'de estágio':'CLT'):`${clt} CLT e ${estagio} estágio`;
+    e.confirmText.textContent=`Criar ${selected.size} pessoa(s) ${qual} no Bwipo CRM? Cada uma recebe a tag do próprio tipo. Registros já existentes serão pulados.`;
     e.confirmDialog.showModal();
   });
   e.cancelBtn.addEventListener('click',()=>e.confirmDialog.close()); e.confirmBtn.addEventListener('click',create);
+  e.retryErrorsBtn.addEventListener('click',()=>{
+    if(!snapshot||!retryKeys.length||busy) return;
+    selected=new Set(retryKeys.filter(key=>snapshot.candidates.some(c=>c.key===key)));
+    const types=[...new Set(selectedTypes())].filter(Boolean);
+    if(!types.length||types.some(type=>type!=='CLT'&&type!=='ESTAGIO')) { message(e.jobStatus,'As pessoas com erro estão sem tipo de contrato.',true); return; }
+    renderPeople();
+    e.confirmText.textContent=`Tentar de novo ${selected.size} pessoa(s) que falharam? Quem já entrou no CRM será pulado.`;
+    e.confirmDialog.showModal();
+  });
+  function showTab(name) {
+    const activations = name === 'ativacoes';
+    e.paneConsulta.classList.toggle('hidden', activations);
+    e.paneAtivacoes.classList.toggle('hidden', !activations);
+    e.tabConsulta.classList.toggle('on', !activations);
+    e.tabAtivacoes.classList.toggle('on', activations);
+    if (activations) loadActivations();
+  }
+  async function loadActivations() {
+    message(e.activationsStatus, 'Carregando ativações…');
+    try {
+      const data = await api('/api/ativacoes?page=' + activationPage);
+      activationPage = data.page || 1;
+      e.activationRows.replaceChildren();
+      if (!data.configured) message(e.activationsStatus, 'Banco não configurado. Defina DATABASE_URL no servidor.', true);
+      else if (data.error) message(e.activationsStatus, data.error, true);
+      else if (!data.items.length) message(e.activationsStatus, 'Nenhuma pessoa ativada ainda.');
+      else message(e.activationsStatus, data.total + ' pessoa(s) ativada(s).');
+      for (const item of data.items || []) {
+        const row = document.createElement('tr');
+        const when = item.criadoEm ? new Date(item.criadoEm).toLocaleString('pt-BR') : '—';
+        cell(row, when); cell(row, item.nome); cell(row, item.telefone || '—'); cell(row, item.cep || '—'); cell(row, item.vaga || '—');
+        const typeCell = document.createElement('td');
+        const pill = document.createElement('span');
+        pill.className = 'pill' + (item.tipo === 'ESTAGIO' ? ' stage' : '');
+        pill.textContent = item.tipo === 'ESTAGIO' ? 'Estágio' : (item.tipo || '—');
+        typeCell.append(pill); row.append(typeCell);
+        cell(row, item.dealId || '—');
+        e.activationRows.append(row);
+      }
+      e.activationLabel.textContent = data.total ? `Página ${data.page} de ${data.pages}` : '';
+      e.activationPrev.disabled = activationPage <= 1;
+      e.activationNext.disabled = !data.pages || activationPage >= data.pages;
+    } catch (error) { message(e.activationsStatus, error.message, true); }
+  }
+  e.tabConsulta.addEventListener('click', () => showTab('consulta'));
+  e.tabAtivacoes.addEventListener('click', () => showTab('ativacoes'));
+  e.activationsRefresh.addEventListener('click', loadActivations);
+  e.activationPrev.addEventListener('click', () => { activationPage -= 1; loadActivations(); });
+  e.activationNext.addEventListener('click', () => { activationPage += 1; loadActivations(); });
 })();
 </script>
 </body>
