@@ -280,6 +280,24 @@ function parseExpiry(value) {
 function loginServiceError(status) {
   return status === 500 || status === 502 || status === 503;
 }
+function assembleAtsCookie(raw) {
+  const text = String(raw || '').trim();
+  if (/^ats-webui=[^;\s]+$/.test(text) && !/^ats-webui=chunks-\d+$/.test(text)) return text;
+  const pairs = text.split(/;\s*/).map(part => {
+    const eq = part.indexOf('=');
+    return eq > 0 ? [part.slice(0, eq), part.slice(eq + 1)] : null;
+  }).filter(Boolean);
+  const map = new Map(pairs);
+  const count = Number(/^chunks-(\d+)$/.exec(map.get('ats-webui') || '')?.[1]);
+  if (!count) return '';
+  let value = '';
+  for (let i = 1; i <= count; i++) {
+    const piece = map.get(`ats-webuiC${i}`) || map.get(`ats-webui.${i}`) || map.get(`ats-webui-${i}`);
+    if (!piece) return '';
+    value += piece;
+  }
+  return `ats-webui=${value}`;
+}
 async function fetchLoginCookie(force) {
   let response;
   let lastStatus = 0;
@@ -304,10 +322,14 @@ async function fetchLoginCookie(force) {
   let data;
   try { data = await response.json(); } catch { throw new Error('Resposta inválida do pandape-login.'); }
   const expiry = parseExpiry(data.expiresAt);
-  if (typeof data.cookie !== 'string' || !/^ats-webui=[^;\s]+$/.test(data.cookie) || !Number.isFinite(expiry) || expiry <= Date.now()) {
+  const cookie = assembleAtsCookie(data.cookie);
+  if (/^ats-webui=chunks-\d+$/.test(String(data.cookie || '').trim()) && !cookie) {
+    throw new Error('O pandape-login devolveu a sessão incompleta: o cookie do Pandapé veio dividido e só chegou o marcador. Não foi feito deploy.');
+  }
+  if (!cookie || !/^ats-webui=[^;\s]+$/.test(cookie) || !Number.isFinite(expiry) || expiry <= Date.now()) {
     throw new Error('Cookie ou validade inválida na resposta do pandape-login.');
   }
-  loginCookie = data.cookie;
+  loginCookie = cookie;
   loginCookieExpiresAt = expiry;
   return loginCookie;
 }
@@ -342,13 +364,15 @@ async function healthUp() {
 }
 async function waitForRestart() {
   const deadline = Date.now() + deployTimeoutMs();
+  const steadyDeadline = Date.now() + Math.min(deployTimeoutMs(), 30000);
   let sawDown = false;
   while (Date.now() < deadline) {
     const up = await healthUp();
     if (!up) sawDown = true;
-    else if (sawDown) return;
+    else if (sawDown || Date.now() >= steadyDeadline) return;
     await sleep(deployPollMs());
   }
+  if (await healthUp()) return;
   throw new Error('O pandape-login não voltou após o deploy.');
 }
 async function recoverByDeploy() {
@@ -1014,6 +1038,6 @@ if (require.main === module) {
 
 module.exports = {
   extractVacancies, extractVacancyCards, extractFolders, extractContractType, extractCandidates, extractDetail, decodeEntities,
-  getPandapeCookie, resetLoginState, listMatches, parseMatchList, canonicalPhone, samePhone, stageIsKnown,
+  getPandapeCookie, resetLoginState, listMatches, parseMatchList, assembleAtsCookie, canonicalPhone, samePhone, stageIsKnown,
   createInCrm, resetCrmTargets, DEAL_FIELDS
 };

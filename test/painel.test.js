@@ -78,6 +78,11 @@ before(async () => {
       }
       if (url.pathname === '/cookie') {
         const force = url.searchParams.get('force');
+        if (cookieBehavior === 'chunks') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ cookie: 'ats-webui=chunks-2', expiresAt: new Date(Date.now() + 3600_000).toISOString() }));
+          return;
+        }
         if (cookieBehavior === 'force-500' && force) {
           res.writeHead(500, { 'Content-Type': 'text/plain' });
           res.end('falha');
@@ -398,6 +403,17 @@ test('HTTP 500 ao forçar o login reaproveita o cookie em cache', async () => {
   assert.equal(await app.getPandapeCookie(true), COOKIE);
   assert.ok(calls.some(call => call.path === '/cookie' && call.search === '?force=1'));
   assert.ok(calls.some(call => call.path === '/cookie' && call.search === ''));
+  cookieBehavior = 'valid';
+});
+
+test('cookie dividido sem as partes não dispara deploy', async () => {
+  calls.length = 0;
+  app.resetLoginState();
+  cookieBehavior = 'chunks';
+  await assert.rejects(() => app.getPandapeCookie(false), /sessão incompleta/);
+  assert.equal(calls.filter(call => call.path === '/deploy').length, 0);
+  assert.equal(app.assembleAtsCookie('ats-webui=chunks-2; ats-webuiC1=aaa; ats-webuiC2=bbb'), 'ats-webui=aaabbb');
+  assert.equal(app.assembleAtsCookie('ats-webui=sessao-de-teste'), 'ats-webui=sessao-de-teste');
   cookieBehavior = 'valid';
 });
 
