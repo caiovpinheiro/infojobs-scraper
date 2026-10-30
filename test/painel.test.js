@@ -49,14 +49,19 @@ before(async () => {
       calls.push({ method: req.method, path: url.pathname, search: url.search, auth: req.headers['x-auth-token'] || '', cookie: req.headers.cookie || '', body });
       if (crmMode) {
         const json = data => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
-        if (url.pathname === '/pipelines') return json([{ id: 'pipe', name: 'Candidaturas', stages: [{ id: 'etapa-ativacoes', name: 'Ativações' }] }]);
+        if (url.pathname === '/pipelines') return json([{ id: 'pipe', name: 'Candidaturas', stages: [{ id: 'etapa-ativacoes', name: 'Ativações' }, { id: 'etapa-entrevista', name: 'Entrevista' }, { id: 'etapa-perdidos', name: 'Perdidos' }] }]);
         if (url.pathname === '/tags' && req.method === 'GET') return json({ items: [] });
         if (url.pathname === '/tags' && req.method === 'POST') return json({ id: 'tag-' + JSON.parse(body).name, name: JSON.parse(body).name });
         if (url.pathname === '/contacts' && req.method === 'GET') return json({ items: [] });
         if (url.pathname === '/contacts' && req.method === 'POST') return json({ id: 'contact-1', name: 'Pessoa Teste', phone: JSON.parse(body).phone });
         if (url.pathname === '/deals' && req.method === 'GET') {
-          if (existingDeal === 'ativacoes') return json({ items: [{ id: 'deal-antiga', stageId: 'etapa-ativacoes', title: 'Pessoa Teste' }] });
-          if (existingDeal === 'outra') return json({ items: [{ id: 'deal-b2b', stageId: 'etapa-b2b', title: 'Outro negócio' }] });
+          const status = url.searchParams.get('status');
+          if (status === 'lost' && existingDeal === 'perdido') return json({ items: [{ id: 'deal-perdida', status: 'lost', pipelineId: 'pipe', title: 'Pessoa Teste' }] });
+          if (status) return json({ items: [] });
+          if (existingDeal === 'ativacoes') return json({ items: [{ id: 'deal-antiga', stageId: 'etapa-ativacoes', pipelineId: 'pipe', title: 'Pessoa Teste' }] });
+          if (existingDeal === 'outra') return json({ items: [{ id: 'deal-b2b', stageId: 'etapa-b2b', pipelineId: 'outro', title: 'Outro negócio' }] });
+          if (existingDeal === 'mesma') return json({ items: [{ id: 'deal-entrevista', stageId: 'etapa-entrevista', pipelineId: 'pipe', title: 'Pessoa Teste' }] });
+          if (existingDeal === 'perdidos-etapa') return json({ items: [{ id: 'deal-coluna', stageId: 'etapa-perdidos', pipelineId: 'pipe', title: 'Pessoa Teste' }] });
           return json({ items: [] });
         }
         if (url.pathname === '/deals' && req.method === 'POST') return json({ id: 'deal-1' });
@@ -367,7 +372,7 @@ test('criação grava os campos, a tag e a nota interna da conversa', async () =
   existingDeal = '';
 });
 
-test('negócio fora de Ativações não impede criar; negócio nessa etapa é pulado', async () => {
+test('negócio em outro pipeline não impede criar; no pipeline Candidaturas, inclusive perdido, é pulado', async () => {
   calls.length = 0;
   crmMode = true;
   existingDeal = 'outra';
@@ -390,6 +395,30 @@ test('negócio fora de Ativações não impede criar; negócio nessa etapa é pu
   assert.equal(skipped.status, 'ja_existe');
   assert.equal(skipped.dealId, 'deal-antiga');
   assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 0);
+
+  calls.length = 0;
+  app.resetCrmTargets();
+  existingDeal = 'mesma';
+  const samePipeline = await app.createInCrm(person);
+  assert.equal(samePipeline.status, 'ja_existe');
+  assert.equal(samePipeline.dealId, 'deal-entrevista');
+  assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 0);
+
+  calls.length = 0;
+  app.resetCrmTargets();
+  existingDeal = 'perdidos-etapa';
+  const lostColumn = await app.createInCrm(person);
+  assert.equal(lostColumn.status, 'ja_existe');
+  assert.equal(lostColumn.dealId, 'deal-coluna');
+
+  calls.length = 0;
+  app.resetCrmTargets();
+  existingDeal = 'perdido';
+  const lost = await app.createInCrm(person);
+  assert.equal(lost.status, 'ja_existe');
+  assert.equal(lost.dealId, 'deal-perdida');
+  assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 0);
+  assert.ok(calls.some(call => call.method === 'GET' && call.path === '/deals' && call.search.includes('status=lost')));
   crmMode = false;
   existingDeal = '';
 });

@@ -572,6 +572,47 @@ async function mapLimited(items, limit, callback) {
 function dealStageId(deal) {
   return deal?.stageId || deal?.stage?.id || '';
 }
+function dealPipelineId(deal) {
+  return deal?.pipelineId || deal?.pipeline?.id || deal?.stage?.pipelineId || '';
+}
+function isLostDeal(deal) {
+  if (!deal || typeof deal !== 'object') return false;
+  if (deal.lost === true || deal.isLost === true || deal.perdido === true) return true;
+  const status = fold(deal.status || deal.state || deal.outcome || deal.result || '');
+  if (['lost', 'perdido', 'perdidos', 'closed_lost', 'lose'].includes(status)) return true;
+  const stageName = fold(deal.stageName || deal.stage?.name || '');
+  return stageName === 'perdido' || stageName === 'perdidos';
+}
+function dealInPipeline(deal, targets) {
+  const stageId = String(dealStageId(deal) || '');
+  if (stageId && targets.stageIds?.includes(stageId)) return true;
+  const pipelineId = String(dealPipelineId(deal) || '');
+  return Boolean(pipelineId && targets.pipelineId && pipelineId === targets.pipelineId);
+}
+function blockingDeal(deals, targets) {
+  return deals.find(deal => dealInPipeline(deal, targets) || isLostDeal(deal)) || null;
+}
+async function dealsForContact(contactId) {
+  const query = '/deals?contactId=' + encodeURIComponent(contactId) + '&perPage=100';
+  const deals = [];
+  const seen = new Set();
+  const add = body => {
+    for (const deal of items(body)) {
+      const id = deal?.id ? String(deal.id) : '';
+      if (id && seen.has(id)) continue;
+      if (id) seen.add(id);
+      deals.push(deal);
+    }
+  };
+  add(await crm('GET', query));
+  for (const status of ['lost']) {
+    try { add(await crm('GET', query + '&status=' + encodeURIComponent(status))); }
+    catch (error) {
+      if (!/HTTP (400|404|422)/.test(error.message || '')) throw error;
+    }
+  }
+  return deals;
+}
 async function createPreview(limit, contractType) {
   denialRefreshUsed = false;
   const dispatched = await loadDispatched();
@@ -756,6 +797,8 @@ async function loadCrmTargets() {
   const tags = items(await crm('GET', '/tags'));
   crmTargets = {
     stageId: stage.id,
+    pipelineId: pipeline.id ? String(pipeline.id) : '',
+    stageIds: (pipeline.stages || []).map(item => item?.id ? String(item.id) : '').filter(Boolean),
     tags: {
       CLT: await ensureTag(tags, 'INFOJOBS - CLT'),
       ESTAGIO: await ensureTag(tags, 'INFOJOBS - ESTÁGIO')
@@ -835,8 +878,8 @@ async function createInCrm(c) {
     if (!contact) contact = await crm('POST', '/contacts', { name: c.nome, phone });
     if (!contact?.id) throw new Error('CRM não retornou o ID do contato.');
     result.contactId = contact.id;
-    const deals = items(await crm('GET', '/deals?contactId=' + encodeURIComponent(contact.id) + '&perPage=100'));
-    const existing = deals.find(deal => dealStageId(deal) === targets.stageId);
+    const deals = await dealsForContact(contact.id);
+    const existing = blockingDeal(deals, targets);
     if (existing) { result.status = 'ja_existe'; result.dealId = existing.id; return result; }
     const deal = await crm('POST', '/deals', {
       stageId: targets.stageId,

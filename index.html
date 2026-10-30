@@ -269,7 +269,7 @@
       e.progressBar.style.width=pct+'%';
       const skip=job.skip||{};
       const reasons=[skip.sem_telefone&&`${skip.sem_telefone} sem telefone`, skip.nao_inscrito&&`${skip.nao_inscrito} fora de Inscritos`, skip.telefone_repetido&&`${skip.telefone_repetido} telefone repetido`, skip.ja_ativado&&`${skip.ja_ativado} já ativados`].filter(Boolean).join(', ');
-      message(e.jobStatus,`Lote ${job.id}: ${job.processed}/${job.total} processados · ${job.created} criados · ${job.existing} já na etapa Ativações · ${job.skipped} pulados · ${job.partial} parciais · ${job.errors} erros.`+(reasons?` Pulados: ${reasons}.`:'')+(job.error?' '+job.error:''),job.status==='failed');
+      message(e.jobStatus,`Lote ${job.id}: ${job.processed}/${job.total} processados · ${job.created} criados · ${job.existing} já no CRM · ${job.skipped} pulados · ${job.partial} parciais · ${job.errors} erros.`+(reasons?` Pulados: ${reasons}.`:'')+(job.error?' '+job.error:''),job.status==='failed');
       if(job.status==='running') return setTimeout(()=>poll(jobId),2500);
       e.resultRows.replaceChildren();
       for(const item of job.results||[]) { const row=document.createElement('tr'); cell(row,item.nome); cell(row,item.status+(item.error?' · '+item.error:'')); cell(row,item.contactId); cell(row,item.dealId); e.resultRows.append(row); }
