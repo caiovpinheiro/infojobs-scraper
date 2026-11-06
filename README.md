@@ -40,6 +40,7 @@ Abra `http://localhost:3000`. No Easypanel, informe as variáveis no painel do s
 | `CRM_BASE_URL`, `CRM_API_KEY` | API do Bwipo CRM e respectiva chave |
 | `CRM_STAGE_ID` | Etapa na qual novos negócios serão criados |
 | `CRM_TAG_ID` | Tag opcional aplicada a novos negócios |
+| `LEAD_WEBHOOK_URL` | Webhook de origem do sistema interno (`https://interno.dnawork.ai/api/v1/webhooks/lead-criado`), chamada a cada negócio novo com `{"telefone":"+55…","origem":"infojobs","campanha":"<vaga>","contactId":…,"dealId":…}`. Vazia ou ausente desliga o envio. 5xx ou falha de rede tenta mais duas vezes; 404 (telefone não encontrado no CRM) não repete. Falha nela não impede a criação no CRM |
 | `VACANCY_TYPES_JSON` | Mapa opcional por ID Pandapé, como `{"12345":"CLT","67890":"ESTAGIO"}` |
 | `MAX_VACANCIES`, `MAX_CANDIDATES`, `MAX_IMPORT` | Tetos de leitura e tamanho do lote; padrões 100, 500 e 100. A página aceita de 1 a 2000 vagas |
 
