@@ -83,58 +83,60 @@ async function esperarCookie(context, page) {
   );
 }
 
-async function avisoDeCaptcha(page) {
+async function avisoDaPagina(page) {
   const texto = await page.locator("body").innerText().catch(() => "");
-  const aviso = texto.match(/valida[cç][aã]o do captcha falhou[^\n]*/i);
-  return aviso ? aviso[0].trim() : "";
+  const aviso = texto.split("\n").map((linha) => linha.trim()).find((linha) => linha.length > 8 && linha.length < 180 && /captcha|senha|inv[aá]lid|falhou|erro/i.test(linha));
+  return aviso || "";
 }
 async function entrarNoPandape(page) {
   const email = page.locator("#Username").or(page.getByRole("textbox", { name: /email ou nome de usu[aá]rio/i }));
   const senha = page.locator("#Password").or(page.getByRole("textbox", { name: /^senha$/i }));
+  const botao = page.locator("#btLogin");
   await email.first().waitFor({ timeout: 15000 });
-  await page.waitForFunction(() => typeof window.getRecaptchaToken === "function", { timeout: 20000 }).catch(() => {});
   let ultimoAviso = "";
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    try {
+      await page.waitForFunction(() => typeof window.getRecaptchaToken === "function", { timeout: 20000 });
+    } catch {
+      if (tentativa === 3) throw new Error("o captcha do Pandapé não carregou. url atual: " + page.url());
+      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      continue;
+    }
     await email.first().fill(PANDAPE_EMAIL);
     await senha.first().fill(PANDAPE_PASSWORD);
-    const temCaptcha = await page.evaluate(() => typeof window.getRecaptchaToken === "function").catch(() => false);
-    if (temCaptcha) {
-      try {
-        await page.evaluate(() => new Promise((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error("captcha sem resposta")), 20000);
-          window.getRecaptchaToken(() => {
-            clearTimeout(timer);
-            const token = document.querySelector("#CaptchaInput") && document.querySelector("#CaptchaInput").value;
-            if (!token) reject(new Error("captcha sem token"));
-            else resolve();
-          });
-        }));
-        await page.locator("#btLogin").evaluate((button) => button.form.requestSubmit(button));
-      } catch (error) {
-        log("falha ao obter captcha:", error.message);
-        if (tentativa === 3) throw error;
-        await page.waitForTimeout(1500);
-        continue;
-      }
-    } else {
-      await page.locator("#btLogin").click();
+    try {
+      await page.evaluate(() => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("captcha sem resposta")), 20000);
+        window.getRecaptchaToken(() => {
+          clearTimeout(timer);
+          const token = document.querySelector("#CaptchaInput") && document.querySelector("#CaptchaInput").value;
+          if (!token) reject(new Error("captcha sem token"));
+          else resolve();
+        });
+      }));
+      // O clique em Entrar envia o formulário antes do token. O envio só acontece com o captcha já preenchido.
+      await botao.evaluate((button) => button.form.requestSubmit(button));
+    } catch (error) {
+      log("falha ao obter captcha:", error.message);
+      if (tentativa === 3) throw error;
+      await page.waitForTimeout(1500);
+      continue;
     }
     const saiu = page.waitForURL(
       (url) => /LoginMultifactor/.test(url.toString()) || /pandape\.infojobs\.com\.br\/Company/.test(url.toString()),
       { timeout: 25000 }
     ).then(() => "ok").catch(() => "parado");
-    const recusado = page.getByText(/valida[cç][aã]o do captcha falhou/i).waitFor({ timeout: 25000 }).then(() => "captcha").catch(() => "parado");
+    const recusado = page.getByText(/captcha falhou/i).waitFor({ timeout: 25000 }).then(() => "captcha").catch(() => "parado");
     const resultado = await Promise.race([saiu, recusado]);
     if (resultado === "ok") return;
-    ultimoAviso = await avisoDeCaptcha(page);
+    ultimoAviso = await avisoDaPagina(page);
     log("login ainda em", page.url().split("?")[0], ultimoAviso || "sem aviso", "tentativa", tentativa);
-    if (!ultimoAviso || tentativa === 3) break;
+    if (tentativa === 3) break;
     await page.waitForTimeout(1500);
   }
   throw new Error(
-    ultimoAviso
-      ? "O Pandapé recusou o captcha do login (" + ultimoAviso + "). url atual: " + page.url()
-      : "depois de Entrar, travou. url atual: " + page.url()
+    (ultimoAviso ? "O Pandapé recusou o login (" + ultimoAviso + "). " : "depois de Entrar, travou. ") +
+    "url atual: " + page.url()
   );
 }
 async function fazerLogin() {
