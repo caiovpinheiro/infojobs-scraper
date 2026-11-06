@@ -874,6 +874,37 @@ async function postInternalNote(contactId, content) {
   const message = sent?.message && typeof sent.message === 'object' ? sent.message : sent;
   if (message?.isPrivate === false || message?.private === false) throw new Error('A nota interna saiu como mensagem.');
 }
+function leadWebhookRetryMs() {
+  const n = Number(process.env.LEAD_WEBHOOK_RETRY_MS);
+  return Number.isFinite(n) && n >= 0 ? n : 2000;
+}
+// Registra a origem do lead novo no sistema interno. Nunca derruba a criação: a falha só fica anotada no resultado.
+// 404 = telefone não encontrado no CRM (não adianta repetir); 5xx ou rede = falha temporária, tenta mais duas vezes.
+async function notifyLeadCreated(c, phone, ids = {}) {
+  const url = (process.env.LEAD_WEBHOOK_URL || '').trim();
+  if (!url) return { status: 'desativado' };
+  const payload = { telefone: `+${phone}`, origem: 'infojobs', campanha: c.vaga || '' };
+  if (ids.contactId) payload.contactId = ids.contactId;
+  if (ids.dealId) payload.dealId = ids.dealId;
+  let lastError = '';
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt > 1) await sleep(leadWebhookRetryMs() * (attempt - 1));
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10000)
+      });
+      if (response.ok) return { status: 'enviado' };
+      const text = (await response.text().catch(() => '')).slice(0, 300);
+      lastError = `HTTP ${response.status}${text ? `: ${text}` : ''}`;
+      if (response.status < 500) break;
+    } catch (error) { lastError = error.message; }
+  }
+  console.error('[painel] webhook lead-criado:', lastError);
+  return { status: 'erro', error: lastError };
+}
 async function createInCrm(c) {
   if (!c.telefone) return { key: c.key, status: 'sem_telefone', nome: c.nome };
   const phone = canonicalPhone(c.telefone);
@@ -895,6 +926,9 @@ async function createInCrm(c) {
     });
     if (!deal?.id) throw new Error('CRM não retornou o ID do negócio.');
     result.dealId = deal.id;
+    const webhook = await notifyLeadCreated(c, phone, { contactId: contact.id, dealId: deal.id });
+    result.leadWebhook = webhook.status;
+    if (webhook.error) result.leadWebhookError = webhook.error;
     try {
       await saveDealFields(deal.id, c, phone);
       const tagId = targets.tags[c.tipo];

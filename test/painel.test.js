@@ -18,6 +18,7 @@ let healthDown = 0;
 let crmMode = false;
 let existingDeal = '';
 let conversationMisses = 0;
+let leadWebhookStatus = 200;
 let server;
 let base;
 let app;
@@ -65,6 +66,10 @@ before(async () => {
           return json({ items: [] });
         }
         if (url.pathname === '/deals' && req.method === 'POST') return json({ id: 'deal-1' });
+        if (url.pathname === '/lead-criado' && req.method === 'POST') {
+          if (leadWebhookStatus !== 200) { res.writeHead(leadWebhookStatus); return res.end(leadWebhookStatus === 404 ? 'Não encontrei o telefone do lead no CRM.' : 'falha'); }
+          return json({ ok: true });
+        }
         if (url.pathname === '/deals/deal-1/custom-fields' && req.method === 'PUT') return json({ ok: true });
         if (url.pathname === '/deals/deal-1/tags' && req.method === 'POST') return json({ ok: true });
         if (url.pathname === '/conversations' && req.method === 'GET') {
@@ -176,6 +181,9 @@ before(async () => {
   process.env.CRM_STAGE_ID = 'etapa-inexistente';
   process.env.CRM_TAG_ID = 'tag-teste';
   process.env.VACANCY_TYPES_JSON = '{}';
+  process.env.LEAD_WEBHOOK_URL = `${base}/lead-criado`;
+  process.env.LEAD_WEBHOOK_RETRY_MS = '5';
+  process.env.DATABASE_URL = '';
   app = require('../server');
 });
 
@@ -368,6 +376,10 @@ test('criação grava os campos, a tag e a nota interna da conversa', async () =
   assert.match(note.content, /01310-100/);
   assert.ok(calls.indexOf(tag) < calls.indexOf(noteCall));
   assert.equal(calls.filter(call => call.path === '/conversations').length, 4);
+  const webhook = calls.filter(call => call.path === '/lead-criado');
+  assert.equal(webhook.length, 1);
+  assert.deepEqual(JSON.parse(webhook[0].body), { telefone: '+5511988887777', origem: 'infojobs', campanha: 'Estágio em RH', contactId: 'contact-1', dealId: 'deal-1' });
+  assert.equal(result.leadWebhook, 'enviado');
   crmMode = false;
   existingDeal = '';
 });
@@ -395,6 +407,7 @@ test('negócio em outro pipeline não impede criar; no pipeline Candidaturas, in
   assert.equal(skipped.status, 'ja_existe');
   assert.equal(skipped.dealId, 'deal-antiga');
   assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 0);
+  assert.equal(calls.filter(call => call.path === '/lead-criado').length, 0);
 
   calls.length = 0;
   app.resetCrmTargets();
@@ -419,8 +432,42 @@ test('negócio em outro pipeline não impede criar; no pipeline Candidaturas, in
   assert.equal(lost.dealId, 'deal-perdida');
   assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/deals').length, 0);
   assert.ok(calls.some(call => call.method === 'GET' && call.path === '/deals' && call.search.includes('status=lost')));
+  assert.equal(calls.filter(call => call.path === '/lead-criado').length, 0);
   crmMode = false;
   existingDeal = '';
+});
+
+async function createWithWebhookStatus(status) {
+  calls.length = 0;
+  crmMode = true;
+  existingDeal = '';
+  conversationMisses = 0;
+  leadWebhookStatus = status;
+  process.env.CRM_NOTE_POLL_MS = '15';
+  process.env.CRM_NOTE_WAIT_MS = '2000';
+  app.resetCrmTargets();
+  try {
+    return await app.createInCrm({ key: '10:101', nome: 'Pessoa Teste', telefone: '(11) 98888-7777', vaga: 'Operador de Loja', tipo: 'CLT', idVacancy: '10', idMatch: '101' });
+  } finally {
+    leadWebhookStatus = 200;
+    crmMode = false;
+  }
+}
+
+test('webhook lead-criado com 5xx tenta três vezes e não impede a criação no CRM', async () => {
+  const result = await createWithWebhookStatus(503);
+  assert.equal(result.status, 'criado', result.error);
+  assert.equal(result.leadWebhook, 'erro');
+  assert.match(result.leadWebhookError, /503/);
+  assert.equal(calls.filter(call => call.path === '/lead-criado').length, 3);
+});
+
+test('webhook lead-criado com 404 não repete e não impede a criação no CRM', async () => {
+  const result = await createWithWebhookStatus(404);
+  assert.equal(result.status, 'criado', result.error);
+  assert.equal(result.leadWebhook, 'erro');
+  assert.match(result.leadWebhookError, /404: Não encontrei o telefone/);
+  assert.equal(calls.filter(call => call.path === '/lead-criado').length, 1);
 });
 
 test('HTTP 500 ao forçar o login reaproveita o cookie em cache', async () => {
