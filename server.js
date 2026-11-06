@@ -318,7 +318,14 @@ async function fetchLoginCookie(force) {
     break;
   }
   if (response.status >= 300 && response.status < 400) throw new Error('pandape-login redirecionou a requisição.');
-  if (!response.ok) throw new Error(`pandape-login retornou HTTP ${lastStatus}.`);
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const body = await response.json();
+      detail = String(body?.erro || body?.error || '').trim().slice(0, 300);
+    } catch { /* corpo vazio ou não JSON */ }
+    throw new Error(detail ? `pandape-login: ${detail}` : `pandape-login retornou HTTP ${lastStatus}.`);
+  }
   let data;
   try { data = await response.json(); } catch { throw new Error('Resposta inválida do pandape-login.'); }
   const expiry = parseExpiry(data.expiresAt);

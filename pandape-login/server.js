@@ -83,11 +83,66 @@ async function esperarCookie(context, page) {
   );
 }
 
+async function avisoDeCaptcha(page) {
+  const texto = await page.locator("body").innerText().catch(() => "");
+  const aviso = texto.match(/valida[cç][aã]o do captcha falhou[^\n]*/i);
+  return aviso ? aviso[0].trim() : "";
+}
+async function entrarNoPandape(page) {
+  const email = page.locator("#Username").or(page.getByRole("textbox", { name: /email ou nome de usu[aá]rio/i }));
+  const senha = page.locator("#Password").or(page.getByRole("textbox", { name: /^senha$/i }));
+  await email.first().waitFor({ timeout: 15000 });
+  await page.waitForFunction(() => typeof window.getRecaptchaToken === "function", { timeout: 20000 }).catch(() => {});
+  let ultimoAviso = "";
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    await email.first().fill(PANDAPE_EMAIL);
+    await senha.first().fill(PANDAPE_PASSWORD);
+    const temCaptcha = await page.evaluate(() => typeof window.getRecaptchaToken === "function").catch(() => false);
+    if (temCaptcha) {
+      try {
+        await page.evaluate(() => new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("captcha sem resposta")), 20000);
+          window.getRecaptchaToken(() => {
+            clearTimeout(timer);
+            const token = document.querySelector("#CaptchaInput") && document.querySelector("#CaptchaInput").value;
+            if (!token) reject(new Error("captcha sem token"));
+            else resolve();
+          });
+        }));
+        await page.locator("#btLogin").evaluate((button) => button.form.requestSubmit(button));
+      } catch (error) {
+        log("falha ao obter captcha:", error.message);
+        if (tentativa === 3) throw error;
+        await page.waitForTimeout(1500);
+        continue;
+      }
+    } else {
+      await page.locator("#btLogin").click();
+    }
+    const saiu = page.waitForURL(
+      (url) => /LoginMultifactor/.test(url.toString()) || /pandape\.infojobs\.com\.br\/Company/.test(url.toString()),
+      { timeout: 25000 }
+    ).then(() => "ok").catch(() => "parado");
+    const recusado = page.getByText(/valida[cç][aã]o do captcha falhou/i).waitFor({ timeout: 25000 }).then(() => "captcha").catch(() => "parado");
+    const resultado = await Promise.race([saiu, recusado]);
+    if (resultado === "ok") return;
+    ultimoAviso = await avisoDeCaptcha(page);
+    log("login ainda em", page.url().split("?")[0], ultimoAviso || "sem aviso", "tentativa", tentativa);
+    if (!ultimoAviso || tentativa === 3) break;
+    await page.waitForTimeout(1500);
+  }
+  throw new Error(
+    ultimoAviso
+      ? "O Pandapé recusou o captcha do login (" + ultimoAviso + "). url atual: " + page.url()
+      : "depois de Entrar, travou. url atual: " + page.url()
+  );
+}
 async function fazerLogin() {
   const { chromium } = require("playwright");
   log("iniciando login real no Pandapé...");
   const browser = await chromium.launch({
     headless: false,
+    ignoreDefaultArgs: ["--enable-automation"],
     args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
   });
   let page;
@@ -98,6 +153,9 @@ async function fazerLogin() {
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
       locale: "pt-BR"
+    });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
     });
     page = await context.newPage();
 
@@ -113,18 +171,7 @@ async function fazerLogin() {
     log("após navegação inicial, url=" + page.url());
 
     if (/login\.pandape\.com/.test(page.url())) {
-      await page.getByRole("textbox", { name: "Email ou nome de usuário" }).fill(PANDAPE_EMAIL);
-      await page.getByRole("textbox", { name: "Senha" }).fill(PANDAPE_PASSWORD);
-      await page.getByRole("button", { name: "Entrar" }).click();
-
-      try {
-        await page.waitForURL(
-          (url) => /LoginMultifactor/.test(url.toString()) || /pandape\.infojobs\.com\.br\/Company/.test(url.toString()),
-          { timeout: 30000 }
-        );
-      } catch (e) {
-        throw new Error("depois de Entrar, travou. url atual: " + page.url());
-      }
+      await entrarNoPandape(page);
       log("depois de Entrar, url=" + page.url());
 
       if (/LoginMultifactor/.test(page.url())) {
