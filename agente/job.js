@@ -4,7 +4,7 @@
 // distância e idade no código, leitura do currículo pela IA, descarte, nota e ordem.
 
 const { perfilDoHtml } = require('./texto');
-const { distanciaKm, descarte, nota, ordenar } = require('./regras');
+const { distanciaKm, descarte, nota, ordenar, medianaKm, RAIO_KM } = require('./regras');
 const { textoDaVaga } = require('./vagas');
 
 const NI = 'não identificado';
@@ -143,6 +143,7 @@ async function executarAgente({ ligacoes, vagasPandape, candidatos, vagasDna, de
     const motivos = new Map();
     let ilegiveis = 0;
     let semAcesso = 0;
+    const distancias = [];
     let falhas = 0;
     const descartar = motivo => { linha.descartados++; motivos.set(motivo, (motivos.get(motivo) || 0) + 1); };
 
@@ -151,6 +152,7 @@ async function executarAgente({ ligacoes, vagasPandape, candidatos, vagasDna, de
         const pontoPessoa = await geo.pontoDoCep(c.cep);
         if (!pontoPessoa) { linha.semDistancia++; return; }
         const km = c.cep && vaga.cep && String(c.cep).replace(/\D/g, '') === String(vaga.cep).replace(/\D/g, '') ? 0 : distanciaKm(pontoPessoa, pontoVaga);
+        distancias.push(km);
         const antes = descarte(regra, { idade: c.idade, distanciaKm: km }, null);
         if (antes) { descartar(antes); return; }
         let html;
@@ -173,6 +175,11 @@ async function executarAgente({ ligacoes, vagasPandape, candidatos, vagasDna, de
     linha.aderentes = aprovados.length;
     linha.meta = aprovados.length >= META;
     if (!linha.meta) notas.push(`Aderentes abaixo de ${META} (${aprovados.length} de ${grupo.pessoas.length} inscritos analisados).`);
+    const mediana = medianaKm(distancias);
+    if (mediana !== null) {
+      notas.push(`Metade dos inscritos mora a até ${Math.ceil(mediana)} km desta vaga.`);
+      if (mediana > RAIO_KM) notas.push('Quase todos moram longe: confira se a vaga do Pandapé é da mesma loja e se o endereço da vaga está certo no sistema da DNA.');
+    }
     if (linha.semDistancia) notas.push(`${plural(linha.semDistancia, 'pessoa sem CEP localizável ficou', 'pessoas sem CEP localizável ficaram')} fora.`);
     if (motivos.size) notas.push(`Descartes: ${[...motivos].map(([m, n]) => `${m} (${n})`).join('; ')}.`);
     if (ilegiveis) notas.push(`${plural(ilegiveis, 'perfil ilegível', 'perfis ilegíveis')} no Pandapé.`);

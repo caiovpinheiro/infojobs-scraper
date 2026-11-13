@@ -48,3 +48,11 @@ test('CEP inválido e erro de rede não chamam nem quebram', async () => {
   assert.equal(fetch.chamadas.length, 0);
   assert.equal(await geo.pontoDoCep('01310100'), null);
 });
+
+test('limite de pedidos (429) espera e tenta de novo', async () => {
+  let vezes = 0;
+  const fetch = async () => (++vezes === 1 ? resposta(429, {}) : resposta(200, { lat: '-23.5', lng: '-46.6' }));
+  const geo = criarGeo({ fetch, ...urls, esperaMs: 1 });
+  assert.deepEqual(await geo.pontoDoCep('01310100'), { lat: -23.5, lng: -46.6 });
+  assert.equal(vezes, 2);
+});

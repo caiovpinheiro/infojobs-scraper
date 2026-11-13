@@ -6,7 +6,8 @@ const crypto = require('node:crypto');
 const { criarIa } = require('./ia');
 const { criarGeo } = require('./geo');
 const { listarVagasDna } = require('./vagas');
-const { sugerirLigacoes } = require('./texto');
+const { sugerirLigacoes, pontuarLigacoes } = require('./texto');
+const { maisPerto } = require('./regras');
 const { executarAgente } = require('./job');
 const { montarPlanilha } = require('./planilha');
 
@@ -24,12 +25,12 @@ function nomeDoArquivo(data) {
  * env: process.env. obterPool(): Pool do pg ou null. erroDoBanco(): texto. snapshots: Map do painel.
  * pandapeGet(caminho): HTML. pandapeBase: URL do Pandapé. maxCandidates: teto da busca.
  */
-function criarServicoAgente({ env, obterPool, erroDoBanco, snapshots, pandapeGet, pandapeBase, maxCandidates }) {
+function criarServicoAgente({ env, obterPool, erroDoBanco, snapshots, pandapeGet, pandapeBase, maxCandidates, geo: geoInjetado }) {
   const ia = criarIa({
     url: env.OPENAI_API_URL || 'https://api.openai.com/v1', key: env.OPENAI_API_KEY || '', model: env.LUNA_MODEL || 'gpt-6-luna',
     timeoutMs: Number(env.LUNA_TIMEOUT_MS) > 0 ? Number(env.LUNA_TIMEOUT_MS) : 60000
   });
-  const geo = criarGeo({ awesomeUrl: env.GEO_AWESOME_URL || undefined, brasilUrl: env.GEO_BRASILAPI_URL || undefined });
+  const geo = geoInjetado || criarGeo({ awesomeUrl: env.GEO_AWESOME_URL || undefined, brasilUrl: env.GEO_BRASILAPI_URL || undefined });
   const vagasDeTeste = env.NODE_ENV === 'test' && env.AGENTE_VAGAS_TESTE_JSON ? JSON.parse(env.AGENTE_VAGAS_TESTE_JSON) : null;
   const jobs = new Map();
   let rodando = false;
@@ -59,10 +60,29 @@ function criarServicoAgente({ env, obterPool, erroDoBanco, snapshots, pandapeGet
     const snapshot = snapshotValido(snapshotId);
     const lista = await vagasDna();
     const sugestoes = sugerirLigacoes(snapshot.vacancies, lista);
+    await desempatarPeloLocal(snapshot, lista, sugestoes);
     return {
       vagasDna: lista.map(v => ({ id: v.id, tipo: v.tipo, rotulo: `${v.cargo} – ${[v.empresa, v.local].filter(Boolean).join(', ') || 'sem loja'} (${v.vagaId || v.id})` })),
       vagasPandape: snapshot.vacancies.map(v => ({ id: v.id, title: v.title, type: v.type, total: v.total, sugestao: sugestoes[v.id] || null }))
     };
+  }
+
+  /**
+   * Várias lojas com o mesmo cargo (ex.: "Operador de Caixa" em três unidades): o título do Pandapé
+   * quase nunca diz a loja. Fica a loja mais perto de onde mora a maioria dos inscritos daquela vaga.
+   */
+  async function desempatarPeloLocal(snapshot, lista, sugestoes) {
+    const porId = new Map(lista.map(v => [v.id, v]));
+    const pontoDaVaga = async v => (Number.isFinite(v.lat) && Number.isFinite(v.lng) ? { lat: v.lat, lng: v.lng } : geo.pontoDoCep(v.cep));
+    for (const vaga of snapshot.vacancies) {
+      const opcoes = pontuarLigacoes(vaga, lista);
+      if (opcoes.length < 2) continue;
+      const ceps = [...new Set(snapshot.candidates.filter(c => String(c.idVacancy) === String(vaga.id) && c.cep).map(c => String(c.cep)))].slice(0, 25);
+      const pontos = (await Promise.all(ceps.map(cep => geo.pontoDoCep(cep)))).filter(Boolean);
+      const comPonto = await Promise.all(opcoes.map(async o => ({ id: o.id, ponto: await pontoDaVaga(porId.get(o.id)) })));
+      const escolhida = maisPerto(comPonto, pontos);
+      if (escolhida) sugestoes[vaga.id] = escolhida;
+    }
   }
 
   async function iniciar(entrada) {

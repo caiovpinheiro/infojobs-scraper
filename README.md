@@ -19,7 +19,7 @@ Com **Analisar os inscritos com o agente depois da busca** marcado (padrão), o 
 A seção **2. Analisar com o agente** cruza as vagas do Pandapé com as vagas abertas do sistema da DNA e ranqueia os inscritos de cada vaga. **Só leitura**: não move, não favorita, não manda mensagem no Pandapé, não cria nada no CRM e não grava no banco.
 
 1. O painel lê as vagas abertas de `public.vaga` (com `public.empresa`, `public.cargo` e `dna_work.flex`) no `DATABASE_URL`. `tipo_vaga` 1 = Estágio, 2 = CLT.
-2. Para cada vaga do Pandapé, liga sozinho a vaga do sistema da DNA mais parecida (mesmo tipo, cargo parecido). Vaga sem correspondência fica fora e aparece no Resumo.
+2. Para cada vaga do Pandapé, liga sozinho a vaga do sistema da DNA mais parecida (mesmo tipo, cargo parecido). Vaga sem correspondência fica fora e aparece no Resumo. Quando várias lojas têm o mesmo cargo (o título do Pandapé quase nunca diz a loja), fica a loja mais perto de onde mora a maioria dos inscritos daquela vaga (até 25 CEPs por vaga).
 3. A análise:
    - distância em linha reta do CEP do inscrito até a vaga (AwesomeAPI e, se falhar, BrasilAPI). Mais de **8 km** é descartado antes da IA. Sem CEP localizável fica fora e conta como "sem distância";
    - idade: vale a da vaga no banco; CLT sem idade na vaga usa 18;
@@ -27,6 +27,8 @@ A seção **2. Analisar com o agente** cruza as vagas do Pandapé com as vagas a
    - descartes: CLT sem experiência na função ou em função relacionada (mapa de funções no prompt, `agente/prompts.js`); estágio sem matrícula ativa, formado ou com ensino médio/técnico quando a vaga não aceita;
    - nota de 0 a 10: obrigatórios até 5, experiência 3 (mesma função) ou 2 (relacionada), distância 1 (até 3 km) ou 0,5 (3 a 8 km), desejáveis até 1. Vaga sem desejáveis dá o ponto inteiro. Empate: quem tem 6+ meses na área, depois o mais perto.
 4. **Baixar planilha (.xlsx)**: aba Resumo (inscritos analisados, sem distância, descartados, aderentes, meta de 50 e observações) e uma aba por vaga, com cabeçalho da vaga, colunas pedidas, filtro, cabeçalho fixo, nota ≥ 8 em verde e de 5 a 7,9 em amarelo.
+
+No Resumo, cada vaga mostra até quantos km mora metade dos inscritos. Se a maioria mora a mais de 8 km, aparece o aviso para conferir se a vaga do Pandapé é da mesma loja e se o endereço da vaga está certo no sistema da DNA. O serviço de CEP é consultado de novo uma vez quando responde 429 (limite) ou erro 5xx.
 
 Limites: o agente avalia os inscritos que a busca trouxe (respeita `MAX_CANDIDATES` e deixa de fora quem já foi disparado para o CRM). Um agente por vez; o resultado fica 1 hora na memória da instância. A busca na base inteira do Pandapé por CEP e raio ainda não existe.
 

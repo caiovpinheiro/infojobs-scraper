@@ -106,25 +106,30 @@ function jaccard(a, b) {
 }
 const SEMELHANCA_MINIMA = 0.34;
 
+const EMPATE = 0.1;
+
+/** Vagas DNA do mesmo tipo com cargo parecido, da mais parecida para a menos, só as que empatam com a melhor. */
+function pontuarLigacoes(vaga, vagasDna) {
+  const titulo = palavras(vaga.title);
+  const opcoes = [];
+  for (const dna of vagasDna) {
+    if (vaga.type && dna.tipo !== vaga.type) continue;
+    const base = jaccard(titulo, palavras(dna.cargo));
+    if (base < SEMELHANCA_MINIMA) continue;
+    const lugar = palavras(`${dna.local || ''} ${dna.empresa || ''}`);
+    let extra = 0;
+    for (const p of titulo) if (lugar.has(p)) extra += 0.01;
+    opcoes.push({ id: dna.id, nota: base + extra });
+  }
+  opcoes.sort((a, b) => b.nota - a.nota);
+  return opcoes.filter(o => o.nota >= opcoes[0].nota - EMPATE);
+}
+
 /** Para cada vaga do Pandapé, o id da vaga DNA mais parecida do mesmo tipo, ou null. */
 function sugerirLigacoes(vagasPandape, vagasDna) {
   const resultado = {};
-  for (const vaga of vagasPandape) {
-    const titulo = palavras(vaga.title);
-    let melhor = null;
-    let melhorNota = 0;
-    for (const dna of vagasDna) {
-      if (vaga.type && dna.tipo !== vaga.type) continue;
-      const base = jaccard(titulo, palavras(dna.cargo));
-      if (base < SEMELHANCA_MINIMA) continue;
-      const lugar = palavras(`${dna.local || ''} ${dna.empresa || ''}`);
-      let extra = 0;
-      for (const p of titulo) if (lugar.has(p)) extra += 0.01;
-      if (base + extra > melhorNota) { melhorNota = base + extra; melhor = dna.id; }
-    }
-    resultado[vaga.id] = melhor;
-  }
+  for (const vaga of vagasPandape) resultado[vaga.id] = pontuarLigacoes(vaga, vagasDna)[0]?.id || null;
   return resultado;
 }
 
-module.exports = { normalizar, decodificar, perfilDoHtml, horarioTexto, sugerirLigacoes };
+module.exports = { normalizar, decodificar, perfilDoHtml, horarioTexto, sugerirLigacoes, pontuarLigacoes };

@@ -83,3 +83,14 @@ test('sugerirLigacoes entende abreviações, feminino e estagiário', () => {
   ], dna);
   assert.deepEqual(r, { 1: 'rh', 2: 'adm', 3: 'op', 4: 'rh', 5: 'vend' });
 });
+
+test('pontuarLigacoes devolve as opções empatadas pelo cargo', () => {
+  const { pontuarLigacoes } = require('../agente/texto');
+  const dna = [
+    { id: 'a', cargo: 'Operador de Caixa', tipo: 'CLT', local: 'Mooca' },
+    { id: 'b', cargo: 'Operador de Caixa', tipo: 'CLT', local: 'Guarulhos' },
+    { id: 'c', cargo: 'Repositor', tipo: 'CLT' }
+  ];
+  assert.deepEqual(pontuarLigacoes({ id: '1', title: 'Operador de caixa', type: 'CLT' }, dna).map(o => o.id).sort(), ['a', 'b']);
+  assert.deepEqual(pontuarLigacoes({ id: '2', title: 'Motorista', type: 'CLT' }, dna), []);
+});

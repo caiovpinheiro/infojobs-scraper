@@ -51,3 +51,15 @@ test('ordem: nota, depois 6+ meses, depois distância', () => {
   assert.deepEqual(ordenar(lista).map(x => x.id), ['b', 'd', 'a', 'e', 'c']);
   assert.equal(lista[0].id, 'a');
 });
+
+test('maisPerto escolhe a loja perto de onde a maioria dos inscritos mora', () => {
+  const { maisPerto, medianaKm } = require('../agente/regras');
+  const mooca = { lat: -23.555, lng: -46.598 };
+  const guarulhos = { lat: -23.454, lng: -46.533 };
+  const inscritos = [{ lat: -23.46, lng: -46.53 }, { lat: -23.45, lng: -46.54 }, { lat: -23.44, lng: -46.52 }, mooca];
+  assert.equal(maisPerto([{ id: 'mooca', ponto: mooca }, { id: 'gru', ponto: guarulhos }], inscritos), 'gru');
+  assert.equal(maisPerto([{ id: 'mooca', ponto: mooca }, { id: 'sem', ponto: null }], inscritos), 'mooca');
+  assert.equal(maisPerto([{ id: 'a', ponto: mooca }], []), null);
+  assert.equal(medianaKm([5, 1, 30, 2]), 3.5);
+  assert.equal(medianaKm([]), null);
+});

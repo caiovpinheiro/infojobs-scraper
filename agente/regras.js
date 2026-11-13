@@ -55,4 +55,29 @@ function ordenar(lista) {
   return [...lista].sort((a, b) => (b.nota - a.nota) || (seisMeses(b) - seisMeses(a)) || (a.distanciaKm - b.distanciaKm));
 }
 
-module.exports = { RAIO_KM, distanciaKm, descarte, nota, ordenar };
+function mediana(valores) {
+  const lista = valores.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!lista.length) return null;
+  const meio = Math.floor(lista.length / 2);
+  return lista.length % 2 ? lista[meio] : (lista[meio - 1] + lista[meio]) / 2;
+}
+function medianaKm(distancias) {
+  const m = mediana(distancias);
+  return m === null ? null : Math.round(m * 10) / 10;
+}
+
+/** Entre lojas com o mesmo cargo, a mais perto do ponto mediano dos inscritos. opcoes: [{ id, ponto }]. */
+function maisPerto(opcoes, pontosInscritos) {
+  if (!pontosInscritos.length) return null;
+  const centro = { lat: mediana(pontosInscritos.map(p => p.lat)), lng: mediana(pontosInscritos.map(p => p.lng)) };
+  let melhor = null;
+  let menor = Infinity;
+  for (const opcao of opcoes) {
+    if (!opcao.ponto) continue;
+    const km = distanciaKm(centro, opcao.ponto);
+    if (km < menor) { menor = km; melhor = opcao.id; }
+  }
+  return melhor;
+}
+
+module.exports = { RAIO_KM, distanciaKm, descarte, nota, ordenar, maisPerto, medianaKm };

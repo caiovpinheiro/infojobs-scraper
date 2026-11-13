@@ -136,3 +136,12 @@ test('final: idade e distância não contam nos obrigatórios e erro do Pandapé
   assert.match(r.resumo[0].observacoes, /1 perfil não abriu no Pandapé/);
   assert.doesNotMatch(r.resumo[0].observacoes, /ilegível/);
 });
+
+test('resumo mostra a distância mediana e avisa quando quase todos moram longe', async () => {
+  const d = deps({});
+  const longe = { ...VAGA_A, id: 'L', lat: -22.9, lng: -47.06 };
+  const r = await executarAgente({ ligacoes: [{ idVacancy: '10', vagaDnaId: 'L' }], vagasPandape: [{ id: '10', title: 'Caixa', type: 'CLT' }],
+    candidatos: [pessoa('1', '10'), pessoa('2', '10')], vagasDna: [longe], deps: d, progresso() {} });
+  assert.match(r.resumo[0].observacoes, /Metade dos inscritos mora a até \d+ km/);
+  assert.match(r.resumo[0].observacoes, /confira se a vaga do Pandapé é da mesma loja/);
+});

@@ -12,10 +12,15 @@ function ponto(lat, lng) {
   return a !== null && b !== null && Math.abs(a) <= 90 && Math.abs(b) <= 180 ? { lat: a, lng: b } : null;
 }
 
-function criarGeo({ fetch = globalThis.fetch, awesomeUrl = 'https://cep.awesomeapi.com.br/json', brasilUrl = 'https://brasilapi.com.br/api/cep/v2', timeoutMs = 10000 } = {}) {
+function criarGeo({ fetch = globalThis.fetch, awesomeUrl = 'https://cep.awesomeapi.com.br/json', brasilUrl = 'https://brasilapi.com.br/api/cep/v2', timeoutMs = 10000, esperaMs = 1500 } = {}) {
   const cache = new Map();
   async function ler(url) {
-    const resposta = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+    let resposta = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+    // Limite de pedidos (429) ou instabilidade: espera um pouco e tenta mais uma vez.
+    if (resposta.status === 429 || resposta.status >= 500) {
+      await new Promise(resolve => setTimeout(resolve, esperaMs));
+      resposta = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+    }
     if (resposta.status === 404 || resposta.status === 400) return { definitivo: true, corpo: null };
     if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`);
     return { definitivo: true, corpo: await resposta.json() };
