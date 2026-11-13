@@ -40,7 +40,9 @@ function perfilDoHtml(html) {
   if (inicio < 0) return null;
   const resto = texto.slice(inicio);
   const fim = resto.search(/id="ResumePersonalInformationContainer"|id="ResumeContactData"/);
-  let trecho = (fim >= 0 ? resto.slice(0, fim) : resto).replace(/^[^>]*>/, '');
+  // Corta no "<" da tag que tem o id do fim, não no id (senão sobra "<div ").
+  const corte = fim >= 0 ? resto.lastIndexOf('<', fim) : -1;
+  let trecho = (fim >= 0 ? resto.slice(0, corte >= 0 ? corte : fim) : resto).replace(/^[^>]*>/, '');
   trecho = trecho.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<br\s*\/?>|<\/(?:p|div|li|h\d|tr|strong|span)>/gi, '\n')
     .replace(/<[^>]*>/g, ' ');

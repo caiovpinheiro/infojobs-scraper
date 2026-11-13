@@ -24,6 +24,10 @@ test('perfilDoHtml recorta o currículo e tira dados de contato', () => {
   }
 });
 
+test('perfilDoHtml não deixa pedaço de tag no fim', () => {
+  assert.equal(perfilDoHtml('<div id="ResumeProfile">perfil-1</div><div id="ResumePersonalInformationContainer">'), 'perfil-1');
+});
+
 test('perfilDoHtml devolve null sem o bloco do currículo', () => {
   assert.equal(perfilDoHtml('<html><body>Erro</body></html>'), null);
   assert.equal(perfilDoHtml(''), null);
