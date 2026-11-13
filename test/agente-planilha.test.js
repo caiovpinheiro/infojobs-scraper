@@ -75,3 +75,14 @@ test('aba sem candidatos ainda tem cabeçalho e tabela', async () => {
   await wb.xlsx.load(await montarPlanilha(r));
   assert.equal(wb.worksheets[1].getCell('A9').value, 'Nº');
 });
+
+test('final: apóstrofo no corte e nome reservado não quebram a planilha', async () => {
+  const usados = new Set(['Resumo']);
+  const nome = nomeDeAba("Operador de Caixa Loja Santa d' Oeste", usados);
+  assert.doesNotMatch(nome, /^'|'$/);
+  assert.notEqual(nomeDeAba('History', usados).toLowerCase(), 'history');
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await montarPlanilha({ resumo: [], abas: [{ vaga: { id: '1', cargo: "Operador de Caixa Loja Santa d'", local: 'Oeste', tipo: 'CLT' }, requisitos: {}, candidatos: [] },
+    { vaga: { id: '2', cargo: 'History', tipo: 'CLT' }, requisitos: {}, candidatos: [] }] }));
+  assert.equal(wb.worksheets.length, 3);
+});

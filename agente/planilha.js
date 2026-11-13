@@ -23,10 +23,11 @@ const AMARELO = 'FFFFEB9C';
 function nomeDeAba(texto, usados) {
   let base = String(texto || '').replace(/[[\]:*?/\\]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^'+|'+$/g, '').trim();
   if (!base) base = 'Vaga';
-  base = base.slice(0, 31).trim();
+  base = base.slice(0, 31).trim().replace(/^'+|'+$/g, '').trim() || 'Vaga';
+  if (base.toLowerCase() === 'history') base = 'History (vaga)';
   const ocupado = nome => [...usados].some(u => u.toLowerCase() === nome.toLowerCase());
   let nome = base;
-  for (let n = 2; ocupado(nome); n++) nome = `${base.slice(0, 31 - String(n).length - 1).trim()} ${n}`;
+  for (let n = 2; ocupado(nome); n++) nome = `${base.slice(0, 31 - String(n).length - 1).trim().replace(/'+$/, '')} ${n}`;
   usados.add(nome);
   return nome;
 }

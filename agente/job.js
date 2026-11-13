@@ -10,6 +10,9 @@ const { textoDaVaga } = require('./vagas');
 const NI = 'não identificado';
 const META = 50;
 const CONCORRENCIA_IA = 4;
+// Idade e distância são conferidas pelo código: não entram na proporção de obrigatórios da IA.
+const CONFERIDO_NO_CODIGO = /\bidade\b|\banos de idade\b|dist[aâ]ncia|\bkm\b|\bmorar? (?:perto|pr[oó]xim)/i;
+function semConferidosNoCodigo(lista) { return (Array.isArray(lista) ? lista : []).filter(item => !CONFERIDO_NO_CODIGO.test(typeof item === 'string' ? item : item?.requisito || '')); }
 
 function tempo(meses) {
   if (!Number.isInteger(meses) || meses < 0) return null;
@@ -122,7 +125,10 @@ async function executarAgente({ ligacoes, vagasPandape, candidatos, vagasDna, de
     if (!pontoVaga) { pularGrupo('CEP pendente: a vaga não tem coordenada nem CEP localizável. Não foi avaliada.'); continue; }
 
     let req;
-    try { req = await ia.requisitosDaVaga(textoDaVaga(vaga)); }
+    try {
+      req = await ia.requisitosDaVaga(textoDaVaga(vaga));
+      req = { ...req, obrigatorios: semConferidosNoCodigo(req.obrigatorios), desejaveis: semConferidosNoCodigo(req.desejaveis) };
+    }
     catch (error) { pularGrupo(`Falha ao ler os requisitos da vaga pela IA (${error.code || 'erro'}). Não foi avaliada.`); continue; }
     if (req.interpretacoes?.length) notas.push(`Interpretações: ${req.interpretacoes.join('; ')}.`);
 
@@ -136,6 +142,7 @@ async function executarAgente({ ligacoes, vagasPandape, candidatos, vagasDna, de
     const aprovados = [];
     const motivos = new Map();
     let ilegiveis = 0;
+    let semAcesso = 0;
     let falhas = 0;
     const descartar = motivo => { linha.descartados++; motivos.set(motivo, (motivos.get(motivo) || 0) + 1); };
 
@@ -146,12 +153,14 @@ async function executarAgente({ ligacoes, vagasPandape, candidatos, vagasDna, de
         const km = c.cep && vaga.cep && String(c.cep).replace(/\D/g, '') === String(vaga.cep).replace(/\D/g, '') ? 0 : distanciaKm(pontoPessoa, pontoVaga);
         const antes = descarte(regra, { idade: c.idade, distanciaKm: km }, null);
         if (antes) { descartar(antes); return; }
-        let perfil = null;
-        try { perfil = perfilDoHtml(await perfilHtml(c)); } catch { perfil = null; }
+        let html;
+        try { html = await perfilHtml(c); } catch { semAcesso++; return; }
+        const perfil = perfilDoHtml(html);
         if (!perfil) { ilegiveis++; linha.descartados++; return; }
         let aval;
         try { aval = await ia.avaliar(texto, req, perfil); }
         catch { falhas++; return; }
+        aval = { ...aval, obrigatorios: semConferidosNoCodigo(aval.obrigatorios), desejaveis: semConferidosNoCodigo(aval.desejaveis) };
         const depois = descarte(regra, { idade: c.idade, distanciaKm: km }, aval);
         if (depois) { descartar(depois); return; }
         aprovados.push({ chave, c, aval, km, distanciaKm: km, nota: nota(aval, km), extras: [] });
@@ -167,6 +176,7 @@ async function executarAgente({ ligacoes, vagasPandape, candidatos, vagasDna, de
     if (linha.semDistancia) notas.push(`${plural(linha.semDistancia, 'pessoa sem CEP localizável ficou', 'pessoas sem CEP localizável ficaram')} fora.`);
     if (motivos.size) notas.push(`Descartes: ${[...motivos].map(([m, n]) => `${m} (${n})`).join('; ')}.`);
     if (ilegiveis) notas.push(`${plural(ilegiveis, 'perfil ilegível', 'perfis ilegíveis')} no Pandapé.`);
+    if (semAcesso) notas.push(`${plural(semAcesso, 'perfil não abriu', 'perfis não abriram')} no Pandapé (sessão expirada ou acesso negado): ${semAcesso === 1 ? 'ficou' : 'ficaram'} sem avaliação.`);
     if (falhas) notas.push(`${plural(falhas, 'falha', 'falhas')} da IA: ${falhas === 1 ? 'a pessoa ficou' : 'as pessoas ficaram'} sem avaliação.`);
     linha.observacoes = [...notas, avisoGeral].filter(Boolean).join(' ');
     abas.push({ vaga, requisitos: req, ligadas: grupo.pandape, aprovados });

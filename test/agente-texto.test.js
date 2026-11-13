@@ -60,3 +60,9 @@ test('sugerirLigacoes liga pelo cargo e respeita o tipo', () => {
   ], dna);
   assert.deepEqual(ligacoes, { 1: 'a', 2: null, 3: null, 4: 'e' });
 });
+
+test('final: sem marcador de fim não devolve nada e telefones com espaço somem', () => {
+  assert.equal(perfilDoHtml('<div id="ResumeProfile">Resumo</div><div id="OutroBloco">Maria da Silva, Rua das Flores, 123</div>'), null);
+  const texto = perfilDoHtml('<div id="ResumeProfile">Ligar 9 8765-4321 ou 3456-7890 ou (11) 9 8765-4321</div><div id="ResumeContactData">');
+  assert.doesNotMatch(texto, /8765|3456/);
+});

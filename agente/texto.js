@@ -29,7 +29,7 @@ function normalizar(texto) {
 
 const LIMITE_PERFIL = 12000;
 const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
-const TELEFONE = /(?:\+?55[\s-]*)?\(?\d{2}\)?[\s-]*9?\d{4}[\s-]?\d{4}\b/g;
+const TELEFONE = /(?:\+?55[\s-]*)?(?:\(?\d{2}\)?[\s-]*)?(?:9[\s-]?)?\d{4}[\s-]?\d{4}\b/g;
 const CEP = /\b\d{5}-?\d{3}\b|\bCEP\b/gi;
 const ARQUIVO = /\S+\.(?:pdf|docx?|odt|rtf|png|jpe?g)\b/gi;
 
@@ -40,9 +40,11 @@ function perfilDoHtml(html) {
   if (inicio < 0) return null;
   const resto = texto.slice(inicio);
   const fim = resto.search(/id="ResumePersonalInformationContainer"|id="ResumeContactData"/);
+  // Sem o marcador do fim não dá para saber onde começam os dados pessoais: melhor não mandar nada.
+  if (fim < 0) return null;
   // Corta no "<" da tag que tem o id do fim, não no id (senão sobra "<div ").
-  const corte = fim >= 0 ? resto.lastIndexOf('<', fim) : -1;
-  let trecho = (fim >= 0 ? resto.slice(0, corte >= 0 ? corte : fim) : resto).replace(/^[^>]*>/, '');
+  const corte = resto.lastIndexOf('<', fim);
+  let trecho = resto.slice(0, corte >= 0 ? corte : fim).replace(/^[^>]*>/, '');
   trecho = trecho.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<br\s*\/?>|<\/(?:p|div|li|h\d|tr|strong|span)>/gi, '\n')
     .replace(/<[^>]*>/g, ' ');

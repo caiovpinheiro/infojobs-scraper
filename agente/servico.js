@@ -69,6 +69,13 @@ function criarServicoAgente({ env, obterPool, erroDoBanco, snapshots, pandapeGet
     const s = status();
     if (!s.pronto) throw erroHttp(503, s.motivo);
     if (rodando) throw erroHttp(409, 'O agente já está analisando. Espere terminar.');
+    // Marca antes de qualquer await: dois pedidos simultâneos não podem iniciar duas análises.
+    rodando = true;
+    try { return await comecar(entrada); }
+    catch (error) { rodando = false; throw error; }
+  }
+
+  async function comecar(entrada) {
     const snapshot = snapshotValido(entrada?.snapshotId);
     const idsPandape = new Set(snapshot.vacancies.map(v => String(v.id)));
     const ligacoes = (Array.isArray(entrada?.ligacoes) ? entrada.ligacoes : [])
@@ -85,7 +92,6 @@ function criarServicoAgente({ env, obterPool, erroDoBanco, snapshots, pandapeGet
     const job = { id: crypto.randomUUID(), status: 'running', feitos: 0, total: candidatos.length, fase: 'iniciando', criadoEm: Date.now() };
     jobs.set(job.id, job);
     for (const [id, antigo] of jobs) if (Date.now() - antigo.criadoEm > UMA_HORA) jobs.delete(id);
-    rodando = true;
     void (async () => {
       try {
         const resultado = await executarAgente({

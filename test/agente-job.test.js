@@ -120,3 +120,19 @@ test('tempo em meses vira texto', () => {
   assert.equal(tempo(1), '1 mês');
   assert.equal(tempo(null), null);
 });
+
+test('final: idade e distância não contam nos obrigatórios e erro do Pandapé não vira perfil ilegível', async () => {
+  const d = deps({ 'perfil-1': aval({ obrigatorios: [{ requisito: 'Experiência em caixa', situacao: 'atendido' }, { requisito: 'Idade entre 18 e 30 anos', situacao: 'nao_identificado' }] }) });
+  d.ia.requisitosDaVaga = async () => ({ ...REQ, obrigatorios: ['Experiência em caixa', 'Idade entre 18 e 30 anos', 'Morar a até 5 km da loja'] });
+  const original = d.perfilHtml;
+  d.perfilHtml = async c => { if (c.idMatch === '2') throw new Error('Sessão do Pandapé expirou'); return original(c); };
+  const r = await executarAgente({ ligacoes: [{ idVacancy: '10', vagaDnaId: 'A' }], vagasPandape: [{ id: '10', title: 'Caixa', type: 'CLT' }],
+    candidatos: [pessoa('1', '10'), pessoa('2', '10')], vagasDna: [VAGA_A], deps: d, progresso() {} });
+  const [c] = r.abas[0].candidatos;
+  assert.equal(c.nota, 10);
+  assert.doesNotMatch(c.naoAtendidos, /Idade/);
+  assert.deepEqual(r.abas[0].requisitos.obrigatorios, ['Experiência em caixa']);
+  assert.equal(r.resumo[0].descartados, 0);
+  assert.match(r.resumo[0].observacoes, /1 perfil não abriu no Pandapé/);
+  assert.doesNotMatch(r.resumo[0].observacoes, /ilegível/);
+});

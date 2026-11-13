@@ -10,7 +10,7 @@ const PROMPT_REQUISITOS = `${PAPEL}
 
 Você recebe o texto de UMA vaga em aberto do sistema da DNA. Separe os requisitos dela.
 
-- "obrigatorios": requisitos que eliminam quem não tem (escolaridade, curso, semestre/ano, turno de estudo, idade, experiência, CNH, disponibilidade, horário etc.). Frases curtas, uma por requisito.
+- "obrigatorios": requisitos que eliminam quem não tem (escolaridade, curso, semestre/ano, turno de estudo, experiência, CNH, disponibilidade, horário etc.). Frases curtas, uma por requisito. Idade e distância NÃO entram aqui: idade vai em "idade_min"/"idade_max" e a distância o sistema confere.
 - "desejaveis": diferenciais (o que a vaga diz como "desejável", "diferencial", "será um plus").
 - Para vaga CLT, inclua sempre como obrigatório a experiência na função ou em função relacionada.
 - "idade_min" / "idade_max": só se a vaga disser; senão null.
