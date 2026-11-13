@@ -1054,9 +1054,11 @@ function readJson(req, allowEmpty = false) {
     req.on('error', reject);
   });
 }
+// Arquivos fixos da tela (logo e ícone do sistema interno da DNA). Lista fechada: nada fora dela é servido.
+const PUBLIC_FILES = { '/logo-laranja.png': 'logo-laranja.png', '/favicon-32x32.png': 'favicon-32x32.png' };
 function sourcePage(res) {
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
-    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
   fs.createReadStream(path.join(__dirname, 'index.html')).pipe(res);
 }
@@ -1064,6 +1066,10 @@ async function route(req, res) {
   const url = new URL(req.url, 'http://localhost');
   if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) return sourcePage(res);
   if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true });
+  if (req.method === 'GET' && Object.hasOwn(PUBLIC_FILES, url.pathname)) {
+    res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+    return fs.createReadStream(path.join(__dirname, 'public', PUBLIC_FILES[url.pathname])).pipe(res);
+  }
   if (!url.pathname.startsWith('/api/')) return send(res, 404, { error: 'Página não encontrada.' });
   if (req.method === 'POST' && url.pathname === '/api/preview') {
     const origin = req.headers.origin;

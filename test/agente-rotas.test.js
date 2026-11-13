@@ -100,6 +100,14 @@ test('sem login: busca, liga, roda o agente e baixa a planilha', async () => {
     const status = await (await fetch(`${app.url}/api/agente/status`)).json();
     assert.equal(status.pronto, true, status.motivo);
 
+    const logo = await fetch(`${app.url}/logo-laranja.png`);
+    assert.equal(logo.status, 200);
+    assert.equal(logo.headers.get('content-type'), 'image/png');
+    assert.equal((await fetch(`${app.url}/favicon-32x32.png`)).status, 200);
+    assert.equal((await fetch(`${app.url}/../server.js`)).status, 404);
+    const pagina = await fetch(`${app.url}/`);
+    assert.match(pagina.headers.get('content-security-policy'), /fonts\.gstatic\.com/);
+
     const preview = await fetch(`${app.url}/api/preview`, { method: 'POST', body: '{"maxVacancies":5}' });
     assert.equal(preview.status, 202);
     const job = await esperar(`${app.url}/api/preview/${(await preview.json()).jobId}`);
