@@ -66,7 +66,7 @@ Abra `http://localhost:3000`. No Easypanel, informe as variáveis no painel do s
 | `LEAD_WEBHOOK_URL` | Webhook de origem do sistema interno (`https://interno.dnawork.ai/api/v1/webhooks/lead-criado`), chamada a cada negócio novo com `{"telefone":"+55…","origem":"infojobs","campanha":"<vaga>","contactId":…,"dealId":…}`. Vazia ou ausente desliga o envio. 5xx ou falha de rede tenta mais duas vezes; 404 (telefone não encontrado no CRM) não repete. Falha nela não impede a criação no CRM |
 | `VACANCY_TYPES_JSON` | Mapa opcional por ID Pandapé, como `{"12345":"CLT","67890":"ESTAGIO"}` |
 | `DATABASE_URL` | Postgres do sistema da DNA. Guarda as ativações e é de onde o agente lê as vagas abertas |
-| `OPENAI_API_KEY` | Chave da OpenAI para o agente. Sem ela, a seção 4 mostra "Agente indisponível" e o resto funciona |
+| `OPENAI_API_KEY` | Chave da OpenAI para o agente. Sem ela, a seção 2 mostra "Agente indisponível" e o resto funciona |
 | `OPENAI_API_URL`, `LUNA_MODEL`, `LUNA_TIMEOUT_MS` | Opcionais. Padrões `https://api.openai.com/v1`, `gpt-6-luna` e 60000 ms |
 | `MAX_VACANCIES`, `MAX_CANDIDATES`, `MAX_IMPORT` | Tetos de leitura e tamanho do lote; padrões 100, 500 e 100. A página aceita de 1 a 2000 vagas |
 
