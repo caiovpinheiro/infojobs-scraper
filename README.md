@@ -4,13 +4,35 @@ Aplicativo Node.js com página e API na **mesma origem**, para subir a partir do
 
 ## Operação
 
-1. Entre com o usuário e a senha de `APP_USER` e `APP_PASSWORD` e clique **Buscar inscritos**.
+1. Escolha o tipo de vaga (todos, CLT ou estágio) e a quantidade de vagas, e clique **Buscar vagas**. O painel não tem login (veja "Acesso" abaixo).
 2. O servidor lista as vagas do Pandapé, lê a aba **Inscritos**, conta todos os inscritos encontrados e carrega até `MAX_CANDIDATES` pessoas com nome, telefone, CEP, vaga, ID e tipo. Esta etapa **não escreve** em nenhum serviço.
 3. Se o tipo da vaga não estiver configurado em `VACANCY_TYPES_JSON`, o operador pode marcar CLT ou estágio na tabela das vagas. Essa classificação vale somente para a consulta corrente.
 4. Filtre o tipo, marque pessoas individualmente ou indique uma quantidade para selecionar as primeiras pessoas do tipo escolhido. Confirme a criação.
 5. O servidor reconfirma que cada pessoa ainda está em **Inscritos**. Busca o contato por telefone no Bwipo CRM, cria se não existir e pula quem já tem negócio; caso contrário cria negócio na etapa configurada, nota com os dados disponíveis da vaga/candidato e tag, se configurada. Mostra os resultados por pessoa.
 
 **Não move candidato no Pandapé nem envia WhatsApp.** A quantidade é o número de pessoas selecionadas para tentar criar no CRM; o total criado pode ser menor por falta de telefone, duplicidade, mudança da fila ou erro.
+
+## Agente de triagem (seção 4)
+
+Depois da busca, a seção **4. Analisar com o agente** cruza as vagas do Pandapé com as vagas abertas do sistema da DNA e ranqueia os inscritos de cada vaga. **Só leitura**: não move, não favorita, não manda mensagem no Pandapé, não cria nada no CRM e não grava no banco.
+
+1. O painel lê as vagas abertas de `public.vaga` (com `public.empresa`, `public.cargo` e `dna_work.flex`) no `DATABASE_URL`. `tipo_vaga` 1 = Estágio, 2 = CLT.
+2. Para cada vaga do Pandapé, sugere a vaga do sistema da DNA mais parecida (mesmo tipo, cargo parecido). O operador confere e troca no seletor. Vaga sem ligação fica fora.
+3. **Rodar agente**:
+   - distância em linha reta do CEP do inscrito até a vaga (AwesomeAPI e, se falhar, BrasilAPI). Mais de **8 km** é descartado antes da IA. Sem CEP localizável fica fora e conta como "sem distância";
+   - idade: vale a da vaga no banco; CLT sem idade na vaga usa 18;
+   - a IA (Luna, OpenAI Responses API, `store: false`) lê os requisitos da vaga uma vez e o currículo de cada inscrito. Do perfil do Pandapé vai **só o trecho do currículo** (resumo, experiências, formação, competências, idiomas), sem nome, telefone, e-mail, endereço, CEP nem nome do arquivo do CV;
+   - descartes: CLT sem experiência na função ou em função relacionada (mapa de funções no prompt, `agente/prompts.js`); estágio sem matrícula ativa, formado ou com ensino médio/técnico quando a vaga não aceita;
+   - nota de 0 a 10: obrigatórios até 5, experiência 3 (mesma função) ou 2 (relacionada), distância 1 (até 3 km) ou 0,5 (3 a 8 km), desejáveis até 1. Vaga sem desejáveis dá o ponto inteiro. Empate: quem tem 6+ meses na área, depois o mais perto.
+4. **Baixar planilha (.xlsx)**: aba Resumo (inscritos analisados, sem distância, descartados, aderentes, meta de 50 e observações) e uma aba por vaga, com cabeçalho da vaga, colunas pedidas, filtro, cabeçalho fixo, nota ≥ 8 em verde e de 5 a 7,9 em amarelo.
+
+Limites: o agente avalia os inscritos que a busca trouxe (respeita `MAX_CANDIDATES` e deixa de fora quem já foi disparado para o CRM). Um agente por vez; o resultado fica 1 hora na memória da instância. A busca na base inteira do Pandapé por CEP e raio ainda não existe.
+
+Arquivos: `agente/texto.js` (recorte do perfil, horário, sugestão de ligação), `agente/regras.js` (8 km, descartes, nota, ordem), `agente/geo.js`, `agente/ia.js`, `agente/prompts.js`, `agente/vagas.js`, `agente/job.js`, `agente/planilha.js`, `agente/servico.js` (rotas `/api/agente*`).
+
+## Acesso
+
+O painel **não tem login**. Quem tiver o endereço vê nome, telefone e CEP dos inscritos e pode criar negócios no CRM. Não divulgue o domínio; se precisar restringir, use a proteção por senha do próprio Easypanel ou uma lista de IPs no proxy.
 
 ## Instalação
 
@@ -33,7 +55,6 @@ Abra `http://localhost:3000`. No Easypanel, informe as variáveis no painel do s
 
 | Variável | Uso |
 | --- | --- |
-| `APP_USER`, `APP_PASSWORD` | Credenciais do operador, enviadas apenas à API da própria aplicação por HTTPS |
 | `PANDAPE_LOGIN_URL`, `PANDAPE_LOGIN_TOKEN` | URL do serviço `pandape-login` e seu `AUTH_TOKEN`; o painel chama `GET /cookie` com o cabeçalho `X-Auth-Token` |
 | `PANDAPE_LOGIN_DEPLOY_URL` | Opcional. Webhook de deploy do EasyPanel desse serviço, usado só quando a renovação do cookie falha |
 | `PANDAPE_COOKIE` | Alternativa manual às duas variáveis acima; cookie completo da sessão autenticada |
@@ -42,6 +63,9 @@ Abra `http://localhost:3000`. No Easypanel, informe as variáveis no painel do s
 | `CRM_TAG_ID` | Tag opcional aplicada a novos negócios |
 | `LEAD_WEBHOOK_URL` | Webhook de origem do sistema interno (`https://interno.dnawork.ai/api/v1/webhooks/lead-criado`), chamada a cada negócio novo com `{"telefone":"+55…","origem":"infojobs","campanha":"<vaga>","contactId":…,"dealId":…}`. Vazia ou ausente desliga o envio. 5xx ou falha de rede tenta mais duas vezes; 404 (telefone não encontrado no CRM) não repete. Falha nela não impede a criação no CRM |
 | `VACANCY_TYPES_JSON` | Mapa opcional por ID Pandapé, como `{"12345":"CLT","67890":"ESTAGIO"}` |
+| `DATABASE_URL` | Postgres do sistema da DNA. Guarda as ativações e é de onde o agente lê as vagas abertas |
+| `OPENAI_API_KEY` | Chave da OpenAI para o agente. Sem ela, a seção 4 mostra "Agente indisponível" e o resto funciona |
+| `OPENAI_API_URL`, `LUNA_MODEL`, `LUNA_TIMEOUT_MS` | Opcionais. Padrões `https://api.openai.com/v1`, `gpt-6-luna` e 60000 ms |
 | `MAX_VACANCIES`, `MAX_CANDIDATES`, `MAX_IMPORT` | Tetos de leitura e tamanho do lote; padrões 100, 500 e 100. A página aceita de 1 a 2000 vagas |
 
 O export do workflow comprova somente **nome/ID da vaga, nome/ID da pessoa, telefone e CEP** nos endpoints usados. Não assumi salário, modalidade, e-mail ou descrição, pois o HTML do Pandapé não foi fornecido. O tipo CLT/estágio não aparece no código original; por isso é configurado por ID ou escolhido pelo operador. Se você fornecer um exemplo da resposta de detalhes da vaga, podemos extrair automaticamente os demais campos disponíveis.
