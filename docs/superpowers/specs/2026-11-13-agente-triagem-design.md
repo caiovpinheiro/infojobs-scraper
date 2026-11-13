@@ -87,7 +87,13 @@ Os candidatos são os do snapshot da busca (`snapshots`, em memória, vale 15 mi
 
 Observação: o snapshot já exclui quem foi "disparado" para o CRM antes (`alreadyDispatched`). Isso continua: o agente avalia só os inscritos novos que a busca trouxe.
 
-- **Perfil completo**: o scraper já abre `/Company/Match/Matches/{idVacancy}?idvacancyfolder={folderId}&idMatch={idMatch}` e extrai poucos campos. O agente faz de novo esse `GET` (só leitura, pelo mesmo `pandapeGet`, concorrência 5), remove `script/style/tags`, normaliza espaços e corta em ~12.000 caracteres. Esse texto vai para a IA. **Risco conhecido**: ainda não foi confirmado que essa página traz a experiência profissional e a data da última atualização. O builder deve conferir com um HTML real; se faltar, registrar no Resumo e avaliar com o que houver (experiência "não identificada" → CLT é descartado, conforme a regra).
+- **Perfil completo**: o scraper já abre `/Company/Match/Matches/{idVacancy}?idvacancyfolder={folderId}&idMatch={idMatch}` e extrai poucos campos. O agente faz de novo esse `GET` (só leitura, pelo mesmo `pandapeGet`, concorrência 5). **Conferido num `.har` real (2026-11-13)**: a página traz o currículo em blocos com ids fixos, nesta ordem: `ResumeProfile` (perfil e objetivos/resumo), `ResumeExperiences` (cada experiência com "Mmm AAAA - Mmm AAAA", "(N anos e M meses)", cargo, empresa e descrição), `ResumeDeficiencies`, `ResumeStudies` (formação, com "Cursando"/"Concluído", curso e instituição), `ResumeCertifications`, `ResumeSkills`, `ResumeLanguages`, `ResumeAdditionalInformation`, e depois `ResumePersonalInformationContainer` / `ResumeContactData` (dados pessoais e de contato).
+  - O texto mandado à IA é **só o trecho de `id="ResumeProfile"` até `id="ResumePersonalInformationContainer"`** (exclusive), sem `script/style/tags`, com espaços normalizados, cortado em ~12.000 caracteres. Assim nome, telefone, e-mail e endereço do cabeçalho e de "Dados pessoais" não vão para a OpenAI.
+  - Rede de segurança: remover do trecho e-mails, telefones (8+ dígitos com ou sem `+55`, traços, parênteses), CEPs e linhas com nome de arquivo (`*.pdf`, `*.doc*` — o "CV em anexo" usa o nome da pessoa no arquivo).
+  - Se o trecho não for encontrado (formato mudou), o candidato fica com status "perfil ilegível", não é avaliado e conta no Resumo.
+  - A página **não mostra data de última atualização do currículo** (só a data da candidatura, "Hoje às 13:02h via Indeed"). A sinalização "perfil desatualizado" fica fora; o campo `perfil_atualizado_em` sai do schema.
+  - A página mostra a "Adequação CV N %" do próprio Pandapé; não é usada na nota.
+  - O `.har` usado contém dados pessoais e cookie de sessão: **não entra no repositório**. Fixtures de teste são HTML sintético com a mesma estrutura de ids.
 - **Distância**: CEP do candidato (já extraído pelo scraper) → coordenada por **AwesomeAPI** (`https://cep.awesomeapi.com.br/json/{cep}`, campos `lat`/`lng`) e, se falhar, **BrasilAPI** (`https://brasilapi.com.br/api/cep/v2/{cep}`, `location.coordinates`). Cache em memória por CEP. Distância em linha reta (haversine) até a vaga. Mesmo CEP da vaga = 0 km.
   - Sem CEP ou CEP não localizado: não entra na lista ranqueada (não dá para garantir os 8 km). Conta no Resumo como "sem distância".
   - Distância > 8 km: descartado **antes** de chamar a IA (economiza chamadas).
@@ -107,7 +113,7 @@ Observação: o snapshot já exclui quem foi "disparado" para o CRM antes (`alre
    `{ obrigatorios: [string], desejaveis: [string], idade_min: int|null, idade_max: int|null, aceita_medio_tecnico: bool|null, cursos: [string], semestre_min: int|null, turno_estudo_compativel: string|null, interpretacoes: [string] }`.
    Para CLT, idade mínima é a da vaga ou 18. Entra no cabeçalho da aba e em "interpretações" do Resumo.
 2. **Uma por candidato (que passou no corte de 8 km)** — recebe a vaga estruturada + o texto do perfil e devolve:
-   `{ experiencia: "mesma"|"relacionada"|"sem_relacao"|"nenhuma", experiencia_funcao: string|null, experiencia_meses: int|null, escolaridade: string|null, curso: string|null, semestre: string|null, matricula_ativa: bool|null, formado: bool|null, obrigatorios: [{requisito, situacao: "atendido"|"nao_atendido"|"nao_identificado"}], desejaveis: [mesmo formato], perfil_atualizado_em: "AAAA-MM-DD"|null, observacoes: string }`.
+   `{ experiencia: "mesma"|"relacionada"|"sem_relacao"|"nenhuma", experiencia_funcao: string|null, experiencia_meses: int|null, escolaridade: string|null, curso: string|null, semestre: string|null, matricula_ativa: bool|null, formado: bool|null, obrigatorios: [{requisito, situacao: "atendido"|"nao_atendido"|"nao_identificado"}], desejaveis: [mesmo formato], observacoes: string }`.
 
 ### Prompt
 O texto do operador vira o prompt de sistema, adaptado para "você avalia UM perfil contra UMA vaga e responde só o JSON": papel (analista da DNA Work, vagas operacionais de varejo e estágio em SP), o **mapa de experiência relacionada** completo (Operador de Caixa, Repositor, Balconista de Frios/Açougue/Padaria, Operador/Auxiliar de Loja, Atendente/Vendedor, Administrativos, e "cargo fora do mapa: bom senso + explicar nas observações"), as regras de estágio (curso, semestre, instituição, turno compatível, matrícula ativa, formado não serve, médio/técnico só se a vaga aceitar, experiência é diferencial) e "dado ausente = não identificado; não invente". As partes de navegação (Chrome, Pandapé, ETAPA 1/3) ficam de fora porque o código faz isso. O prompt fica num arquivo próprio (`agente-prompts.js`) para ser editado sem mexer na lógica.
@@ -126,7 +132,7 @@ Nota (0 a 10, uma casa decimal):
 
 Ordem: nota desc.; empate → quem tem 6+ meses na área primeiro; depois a menor distância.
 
-Sinalizações nas observações: "perfil desatualizado" quando `perfil_atualizado_em` tiver mais de 12 meses; "também apto para: <cargo – loja>" quando a mesma pessoa (mesmo telefone; sem telefone, mesmo nome + nascimento) estiver aprovada em outra aba; o critério da IA quando o cargo não está no mapa.
+Sinalizações nas observações: "também apto para: <cargo – loja>" quando a mesma pessoa (mesmo telefone; sem telefone, mesmo nome + nascimento) estiver aprovada em outra aba; o critério da IA quando o cargo não está no mapa.
 
 Duplicidade: dentro de uma aba, a mesma pessoa aparece uma vez (fica a avaliação de maior nota).
 
@@ -165,6 +171,7 @@ Biblioteca: `exceljs` (dependência nova). Nome do arquivo: `triagem-AAAA-MM-DD-
 - "6+ meses" é o primeiro desempate, antes da distância.
 - Candidato sem CEP localizável fica fora da lista e conta no Resumo.
 - Sugestão de ligação por semelhança de cargo, sempre confirmada pelo operador.
+- **Sexo da vaga** (`public.vaga.sexo`): ignorado pelo agente. O scraper não lê o sexo do candidato, e não entra como requisito para a IA.
 - **Idade**: as colunas `idade`/`idade_ate` da vaga ganham; a idade extraída pela IA só preenche quando a coluna está vazia ou zero. CLT sem nenhuma das duas usa 18.
 - **Meta 50** conta os **aderentes** (aprovados no filtro), não os inscritos. A aba lista todos os aderentes, sem corte em 50.
 - O agente usa os candidatos do snapshot como estão: com o teto `MAX_CANDIDATES` e sem quem já foi disparado ao CRM. Quando o snapshot bateu no teto, o Resumo avisa que nem todos os inscritos foram analisados.
