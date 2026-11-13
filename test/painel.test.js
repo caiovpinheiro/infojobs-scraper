@@ -168,8 +168,6 @@ before(async () => {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   base = `http://127.0.0.1:${server.address().port}`;
-  process.env.APP_USER = 'operador';
-  process.env.APP_PASSWORD = 'senha-teste';
   process.env.PANDAPE_LOGIN_URL = base;
   process.env.PANDAPE_LOGIN_TOKEN = TOKEN;
   process.env.PANDAPE_LOGIN_DEPLOY_URL = `${base}/deploy`;
@@ -278,8 +276,6 @@ test('a consulta lista e conta inscritos sem criar no CRM', async () => {
     env: {
       ...process.env,
       PORT: '0',
-      APP_USER: 'operador',
-      APP_PASSWORD: 'senha-teste',
       PANDAPE_LOGIN_URL: base,
       PANDAPE_LOGIN_TOKEN: TOKEN,
       PANDAPE_BASE_URL: base,
@@ -306,13 +302,12 @@ test('a consulta lista e conta inscritos sem criar no CRM', async () => {
     child.on('exit', code => { clearTimeout(timer); reject(new Error(`saiu ${code}: ${log}`)); });
   });
   try {
-    const auth = 'Basic ' + Buffer.from('operador:senha-teste').toString('base64');
-    const preview = await fetch(`http://127.0.0.1:${started}/api/preview`, { method: 'POST', headers: { Authorization: auth } });
+    const preview = await fetch(`http://127.0.0.1:${started}/api/preview`, { method: 'POST' });
     assert.equal(preview.status, 202);
     const jobStart = await preview.json();
     let job;
     for (let i = 0; i < 20; i++) {
-      const response = await fetch(`http://127.0.0.1:${started}/api/preview/${jobStart.jobId}`, { headers: { Authorization: auth } });
+      const response = await fetch(`http://127.0.0.1:${started}/api/preview/${jobStart.jobId}`);
       job = await response.json();
       if (job.status !== 'running') break;
       await new Promise(resolve => setTimeout(resolve, 50));

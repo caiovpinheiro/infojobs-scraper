@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { Pool } = require('pg');
+const { criarServicoAgente } = require('./agente/servico');
 
 function loadDotEnv(file = path.join(__dirname, '.env')) {
   if (!fs.existsSync(file)) return;
@@ -21,7 +22,6 @@ loadDotEnv();
 
 const config = {
   port: Number(process.env.PORT || 3000),
-  user: process.env.APP_USER || '', password: process.env.APP_PASSWORD || '',
   cookie: process.env.PANDAPE_COOKIE || '',
   loginUrl: (process.env.PANDAPE_LOGIN_URL || '').replace(/\/+$/, ''),
   loginToken: process.env.PANDAPE_LOGIN_TOKEN || '',
@@ -141,16 +141,19 @@ function parseTypes(value) {
   }
   return mapping;
 }
-if (require.main === module && (!config.user || !config.password || !(config.loginUrl && config.loginToken || config.cookie) || !config.crmKey || !config.stageId || Boolean(config.loginUrl) !== Boolean(config.loginToken))) {
-  console.error('Configure APP_USER, APP_PASSWORD, CRM_API_KEY, CRM_STAGE_ID e PANDAPE_LOGIN_URL + PANDAPE_LOGIN_TOKEN (ou PANDAPE_COOKIE) no .env.');
+if (require.main === module && (!(config.loginUrl && config.loginToken || config.cookie) || !config.crmKey || !config.stageId || Boolean(config.loginUrl) !== Boolean(config.loginToken))) {
+  console.error('Configure CRM_API_KEY, CRM_STAGE_ID e PANDAPE_LOGIN_URL + PANDAPE_LOGIN_TOKEN (ou PANDAPE_COOKIE) no .env.');
   process.exit(1);
 }
 
 const snapshots = new Map();
+const agente = criarServicoAgente({
+  env: process.env, obterPool: () => pool, erroDoBanco: () => databaseError, snapshots,
+  pandapeGet: relativePath => pandapeGet(relativePath), pandapeBase: config.pandapeBase, maxCandidates: config.maxCandidates
+});
 const previewJobs = new Map();
 const imports = new Map();
 const jobs = new Map();
-const attempts = new Map();
 let activeImport = false;
 let loginCookie = null;
 let loginCookieExpiresAt = 0;
@@ -1040,15 +1043,6 @@ function send(res, status, data, headers = {}) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers });
   res.end(JSON.stringify(data));
 }
-function equalSecret(a, b) { return crypto.timingSafeEqual(crypto.createHash('sha256').update(a).digest(), crypto.createHash('sha256').update(b).digest()); }
-function authorized(req) {
-  const header = req.headers.authorization || '';
-  if (!header.startsWith('Basic ')) return false;
-  const text = Buffer.from(header.slice(6), 'base64').toString('utf8');
-  const delimiter = text.indexOf(':');
-  if (delimiter < 0) return false;
-  return equalSecret(text.slice(0, delimiter), config.user) && equalSecret(text.slice(delimiter + 1), config.password);
-}
 function readJson(req, allowEmpty = false) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -1071,14 +1065,6 @@ async function route(req, res) {
   if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) return sourcePage(res);
   if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true });
   if (!url.pathname.startsWith('/api/')) return send(res, 404, { error: 'Página não encontrada.' });
-  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0];
-  if (!authorized(req)) {
-    const old = attempts.get(ip) || { n: 0, since: Date.now() };
-    const attempt = Date.now() - old.since > 60_000 ? { n: 1, since: Date.now() } : { n: old.n + 1, since: old.since };
-    attempts.set(ip, attempt);
-    return send(res, attempt.n > 10 ? 429 : 401, { error: 'Acesso não autorizado.' });
-  }
-  attempts.delete(ip);
   if (req.method === 'POST' && url.pathname === '/api/preview') {
     const origin = req.headers.origin;
     if (origin && new URL(origin).host !== req.headers.host) return send(res, 403, { error: 'Origem não permitida.' });
@@ -1099,6 +1085,20 @@ async function route(req, res) {
   if (req.method === 'GET' && /^\/api\/import\/[0-9a-f-]{36}$/i.test(url.pathname)) {
     const job = jobs.get(url.pathname.split('/').pop());
     return job ? send(res, 200, job) : send(res, 404, { error: 'Lote não encontrado nesta instância.' });
+  }
+  if (url.pathname === '/api/agente/status' && req.method === 'GET') return send(res, 200, agente.status());
+  if (url.pathname === '/api/agente/vagas' && req.method === 'GET') return send(res, 200, await agente.vagas(url.searchParams.get('snapshot')));
+  if (url.pathname === '/api/agente' && req.method === 'POST') {
+    const origin = req.headers.origin;
+    if (origin && new URL(origin).host !== req.headers.host) return send(res, 403, { error: 'Origem não permitida.' });
+    return send(res, 202, await agente.iniciar(await readJson(req)));
+  }
+  if (req.method === 'GET' && /^\/api\/agente\/[0-9a-f-]{36}$/i.test(url.pathname)) return send(res, 200, agente.consultar(url.pathname.split('/').pop()));
+  if (req.method === 'GET' && /^\/api\/agente\/[0-9a-f-]{36}\/planilha$/i.test(url.pathname)) {
+    const { buffer, arquivo } = agente.planilha(url.pathname.split('/')[3]);
+    res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${arquivo}"`, 'Content-Length': buffer.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    return res.end(buffer);
   }
   if (req.method === 'POST' && url.pathname === '/api/import') {
     const origin = req.headers.origin;
