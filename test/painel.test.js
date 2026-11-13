@@ -524,3 +524,11 @@ test('a tela não pede usuário e senha e tem a seção do agente', () => {
   assert.equal(html.includes('Authorization'), false);
   for (const texto of ['Buscar vagas', 'Quantidade de vagas', 'Analisar com o agente', 'Rodar agente', 'Baixar planilha']) assert.match(html, new RegExp(texto));
 });
+
+test('o agente roda sozinho depois da busca e as ligações ficam opcionais', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.match(html, /id="autoAgent"[^>]*checked/);
+  assert.match(html, /Analisar os inscritos com o agente depois da busca/);
+  assert.match(html, /<details id="agentLinks"/);
+  assert.match(html, /autoAgent\.checked/);
+});

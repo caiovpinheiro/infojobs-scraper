@@ -12,13 +12,15 @@ Aplicativo Node.js com página e API na **mesma origem**, para subir a partir do
 
 **Não move candidato no Pandapé nem envia WhatsApp.** A quantidade é o número de pessoas selecionadas para tentar criar no CRM; o total criado pode ser menor por falta de telefone, duplicidade, mudança da fila ou erro.
 
-## Agente de triagem (seção 4)
+## Agente de triagem (seção 2)
 
-Depois da busca, a seção **4. Analisar com o agente** cruza as vagas do Pandapé com as vagas abertas do sistema da DNA e ranqueia os inscritos de cada vaga. **Só leitura**: não move, não favorita, não manda mensagem no Pandapé, não cria nada no CRM e não grava no banco.
+Com **Analisar os inscritos com o agente depois da busca** marcado (padrão), o clique em **Buscar vagas** já faz tudo: liga cada vaga do Pandapé à vaga aberta do sistema da DNA, roda o agente e mostra o resumo com **Baixar planilha (.xlsx)**. As ligações ficam em "Ver ou ajustar as ligações das vagas" e só precisam de atenção quando alguma vaga não foi ligada ou foi ligada errado; aí é ajustar e clicar em **Rodar agente de novo**. A ligação automática entende abreviações (RH, Adm., Aux., Op.), o feminino (operadora, vendedora) e estagiário/estágio.
+
+A seção **2. Analisar com o agente** cruza as vagas do Pandapé com as vagas abertas do sistema da DNA e ranqueia os inscritos de cada vaga. **Só leitura**: não move, não favorita, não manda mensagem no Pandapé, não cria nada no CRM e não grava no banco.
 
 1. O painel lê as vagas abertas de `public.vaga` (com `public.empresa`, `public.cargo` e `dna_work.flex`) no `DATABASE_URL`. `tipo_vaga` 1 = Estágio, 2 = CLT.
-2. Para cada vaga do Pandapé, sugere a vaga do sistema da DNA mais parecida (mesmo tipo, cargo parecido). O operador confere e troca no seletor. Vaga sem ligação fica fora.
-3. **Rodar agente**:
+2. Para cada vaga do Pandapé, liga sozinho a vaga do sistema da DNA mais parecida (mesmo tipo, cargo parecido). Vaga sem correspondência fica fora e aparece no Resumo.
+3. A análise:
    - distância em linha reta do CEP do inscrito até a vaga (AwesomeAPI e, se falhar, BrasilAPI). Mais de **8 km** é descartado antes da IA. Sem CEP localizável fica fora e conta como "sem distância";
    - idade: vale a da vaga no banco; CLT sem idade na vaga usa 18;
    - a IA (Luna, OpenAI Responses API, `store: false`) lê os requisitos da vaga uma vez e o currículo de cada inscrito. Do perfil do Pandapé vai **só o trecho do currículo** (resumo, experiências, formação, competências, idiomas), sem nome, telefone, e-mail, endereço, CEP nem nome do arquivo do CV;

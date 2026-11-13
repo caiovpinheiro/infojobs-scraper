@@ -66,3 +66,20 @@ test('final: sem marcador de fim não devolve nada e telefones com espaço somem
   const texto = perfilDoHtml('<div id="ResumeProfile">Ligar 9 8765-4321 ou 3456-7890 ou (11) 9 8765-4321</div><div id="ResumeContactData">');
   assert.doesNotMatch(texto, /8765|3456/);
 });
+
+test('sugerirLigacoes entende abreviações, feminino e estagiário', () => {
+  const dna = [
+    { id: 'rh', cargo: 'Estágio em Recursos Humanos', tipo: 'ESTAGIO' },
+    { id: 'adm', cargo: 'Auxiliar Administrativo', tipo: 'CLT' },
+    { id: 'op', cargo: 'Operador de Caixa', tipo: 'CLT' },
+    { id: 'vend', cargo: 'Vendedor', tipo: 'CLT' }
+  ];
+  const r = sugerirLigacoes([
+    { id: '1', title: 'Estágio em RH', type: 'ESTAGIO' },
+    { id: '2', title: 'Aux. Adm. - Centro', type: 'CLT' },
+    { id: '3', title: 'Operadora de Caixa', type: 'CLT' },
+    { id: '4', title: 'Estagiário de Recursos Humanos', type: 'ESTAGIO' },
+    { id: '5', title: 'Vendedora loja Shopping', type: 'CLT' }
+  ], dna);
+  assert.deepEqual(r, { 1: 'rh', 2: 'adm', 3: 'op', 4: 'rh', 5: 'vend' });
+});

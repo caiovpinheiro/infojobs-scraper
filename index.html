@@ -110,6 +110,9 @@
     .progress { height:6px; background:var(--hover); border-radius:10px; overflow:hidden; margin-top:14px; }
     .progress > span { display:block; height:100%; background:#0891b2; width:0; transition:width .25s; }
     .grade-agente td select { min-width:260px; }
+    .check { display:flex; align-items:center; gap:8px; margin-top:14px; font-size:13px; font-weight:600; color:var(--text); width:fit-content; cursor:pointer; }
+    .links { margin-top:16px; border-top:1px solid var(--border-soft); padding-top:12px; }
+    .links summary { cursor:pointer; color:var(--accent-text); font-weight:600; font-size:13px; width:fit-content; padding:4px 0; }
     .nota { font-weight:800; color:var(--strong); } .ok { color:var(--green-text); font-weight:600; } .alerta { color:var(--amber-text); font-weight:600; }
     dialog { border:1px solid var(--border); border-radius:14px; max-width:min(500px,calc(100vw - 28px)); width:100%; padding:24px; background:var(--surface); color:var(--text); box-shadow:0 24px 80px rgb(0 0 0 / .35); }
     dialog::backdrop { background:rgb(7 20 34 / .6); } dialog .row { justify-content:flex-end; margin-top:24px; }
@@ -156,12 +159,29 @@
     <h2 id="accessTitle">1. Buscar vagas</h2>
     <p class="muted">Escolha o tipo e quantas vagas do Pandapé ler. A busca traz as vagas e os inscritos nelas.</p>
     <div class="form-grid"><label>Tipo de vaga<select id="searchType"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade de vagas<input id="vacancyLimit" type="number" min="1" max="2000" step="1" value="20" inputmode="numeric"></label><button id="loadBtn" class="btn">Buscar vagas</button></div>
+    <label class="check"><input type="checkbox" id="autoAgent" checked> Analisar os inscritos com o agente depois da busca</label>
     <div id="loadStatus" class="status" role="status" aria-live="polite"></div>
     <div class="note">A consulta é somente leitura: não move candidatos e não envia WhatsApp. O total mostra todos os inscritos das vagas consultadas; a tabela pode ter um limite de linhas configurado no servidor.</div>
   </section>
 
+  <section id="agentSection" class="card hidden" aria-labelledby="agentTitle">
+    <div class="row wrap"><div><h2 id="agentTitle">2. Analisar com o agente</h2><p class="muted">O agente liga sozinho cada vaga do Pandapé à vaga do sistema da DNA, lê o currículo dos inscritos, descarta quem mora a mais de 8 km ou não tem os requisitos, dá nota de 0 a 10 e monta a planilha. Só leitura: não mexe no Pandapé, no CRM nem no sistema da DNA.</p></div></div>
+    <div id="agentStatus" class="status" role="status" aria-live="polite"></div>
+    <div id="agentProgress" class="progress hidden"><span id="agentBar"></span></div>
+    <div id="agentResult" class="hidden">
+      <div class="table-wrap"><table><thead><tr><th>Vaga</th><th>Tipo</th><th>Analisados</th><th>Sem distância</th><th>Descartados</th><th>Aderentes</th><th>Meta 50</th><th>Observações</th></tr></thead><tbody id="agentSummary"></tbody></table></div>
+      <div class="row wrap" style="margin-top:14px"><p class="muted">A planilha tem a aba Resumo e uma aba por vaga, com a nota e o link de cada perfil.</p><a id="agentDownload" class="btn" href="#" download>Baixar planilha (.xlsx)</a></div>
+    </div>
+    <details id="agentLinks" class="links">
+      <summary id="agentLinksLabel">Ver ou ajustar as ligações das vagas</summary>
+      <p class="muted" style="margin-top:10px">Só precisa mexer aqui se alguma vaga ficou sem ligação ou foi ligada à vaga errada. Depois clique em "Rodar agente de novo".</p>
+      <div class="table-wrap grade-agente"><table><thead><tr><th>Vaga no Pandapé</th><th>Tipo</th><th>Inscritos</th><th>Vaga no sistema da DNA</th></tr></thead><tbody id="agentRows"></tbody></table></div>
+      <div class="row wrap" style="margin-top:14px"><p id="agentHint" class="muted"></p><button id="agentBtn" class="btn alt" type="button" disabled>Rodar agente de novo</button></div>
+    </details>
+  </section>
+
   <section id="previewSection" class="card hidden" aria-labelledby="vacanciesTitle">
-    <div class="row wrap"><div><h2 id="vacanciesTitle">2. Vagas encontradas</h2><p id="freshness" class="muted"></p></div><button id="refreshBtn" class="minor">Atualizar dados</button></div>
+    <div class="row wrap"><div><h2 id="vacanciesTitle">3. Vagas encontradas</h2><p id="freshness" class="muted"></p></div><button id="refreshBtn" class="minor">Atualizar dados</button></div>
     <div id="metrics" class="metrics"></div>
     <div id="warnings" class="status"></div>
     <div class="table-wrap"><table><thead><tr><th>Vaga</th><th>ID Pandapé</th><th>Inscritos</th><th>Tipo de contrato</th></tr></thead><tbody id="vacancyRows"></tbody></table></div>
@@ -169,7 +189,7 @@
   </section>
 
   <section id="peopleSection" class="card hidden" aria-labelledby="peopleTitle">
-    <div class="row wrap"><div><h2 id="peopleTitle">3. Escolher candidatos</h2><p class="muted">A busca não traz pessoa que já foi disparada. Vaga que voltou a ficar ativa entra de novo, só com inscrito novo. Selecionar todos marca todas as pessoas desta consulta, em todas as páginas. CLT e estágio podem ir no mesmo lote.</p></div><button id="clearBtn" class="minor" type="button">Limpar seleção</button></div>
+    <div class="row wrap"><div><h2 id="peopleTitle">4. Escolher candidatos</h2><p class="muted">A busca não traz pessoa que já foi disparada. Vaga que voltou a ficar ativa entra de novo, só com inscrito novo. Selecionar todos marca todas as pessoas desta consulta, em todas as páginas. CLT e estágio podem ir no mesmo lote.</p></div><button id="clearBtn" class="minor" type="button">Limpar seleção</button></div>
     <div class="controls"><label>Tipo de vaga<select id="typeFilter"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade para selecionar<input id="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex.: 20"></label><button id="selectFirstBtn" class="btn alt" type="button" disabled>Selecionar primeiras</button><button id="selectPageBtn" class="btn alt" type="button" disabled>Selecionar página</button><button id="selectAllBtn" class="btn alt" type="button" disabled>Selecionar todos</button></div>
     <div class="split"><p id="selection" class="muted"></p><p id="tableCount" class="muted"></p></div>
     <div class="table-wrap"><table><thead><tr><th><input id="pageCheck" type="checkbox" aria-label="Selecionar as pessoas desta página"></th><th>Candidato</th><th>Telefone</th><th>CEP</th><th>Vaga</th><th>Tipo</th></tr></thead><tbody id="candidateRows"></tbody></table></div>
@@ -180,17 +200,6 @@
     <div class="row wrap" style="margin-top:12px"><button id="retryErrorsBtn" class="btn alt hidden" type="button">Tentar de novo quem deu erro</button></div>
   </section>
 
-  <section id="agentSection" class="card hidden" aria-labelledby="agentTitle">
-    <div class="row wrap"><div><h2 id="agentTitle">4. Analisar com o agente</h2><p class="muted">Ligue cada vaga do Pandapé à vaga do sistema da DNA. O agente lê o currículo dos inscritos, descarta quem mora a mais de 8 km ou não tem os requisitos, dá nota de 0 a 10 e monta a planilha. Só leitura: não mexe no Pandapé, no CRM nem no sistema da DNA.</p></div></div>
-    <div id="agentStatus" class="status" role="status" aria-live="polite"></div>
-    <div class="table-wrap grade-agente"><table><thead><tr><th>Vaga no Pandapé</th><th>Tipo</th><th>Inscritos</th><th>Vaga no sistema da DNA</th></tr></thead><tbody id="agentRows"></tbody></table></div>
-    <div class="row wrap" style="margin-top:16px"><p id="agentHint" class="muted"></p><button id="agentBtn" class="btn" type="button" disabled>Rodar agente</button></div>
-    <div id="agentProgress" class="progress hidden"><span id="agentBar"></span></div>
-    <div id="agentResult" class="hidden">
-      <div class="table-wrap"><table><thead><tr><th>Vaga</th><th>Tipo</th><th>Analisados</th><th>Sem distância</th><th>Descartados</th><th>Aderentes</th><th>Meta 50</th><th>Observações</th></tr></thead><tbody id="agentSummary"></tbody></table></div>
-      <div class="row wrap" style="margin-top:14px"><p class="muted">A planilha tem a aba Resumo e uma aba por vaga, com a nota e o link de cada perfil.</p><a id="agentDownload" class="btn" href="#" download>Baixar planilha (.xlsx)</a></div>
-    </div>
-  </section>
   </div>
   <section id="paneAtivacoes" class="card hidden" aria-labelledby="activationsTitle">
     <div class="row wrap"><div><h2 id="activationsTitle">Pessoas ativadas</h2><p class="muted">Quem entrou no CRM nesta operação, da mais recente para a mais antiga.</p></div><button id="activationsRefresh" class="minor" type="button">Atualizar</button></div>
@@ -208,7 +217,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const e = Object.fromEntries(['agentSection','agentStatus','agentRows','agentHint','agentBtn','agentProgress','agentBar','agentResult','agentSummary','agentDownload','searchType','vacancyLimit','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selectPageBtn','selectAllBtn','pageCheck','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn','pagePrev','pageNext','pageLabel','tabConsulta','tabAtivacoes','paneConsulta','paneAtivacoes','activationsRefresh','activationsStatus','activationRows','activationPrev','activationNext','activationLabel','retryErrorsBtn'].map(id => [id,$(id)]));
+  const e = Object.fromEntries(['autoAgent','agentLinks','agentLinksLabel','agentSection','agentStatus','agentRows','agentHint','agentBtn','agentProgress','agentBar','agentResult','agentSummary','agentDownload','searchType','vacancyLimit','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selectPageBtn','selectAllBtn','pageCheck','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn','pagePrev','pageNext','pageLabel','tabConsulta','tabAtivacoes','paneConsulta','paneAtivacoes','activationsRefresh','activationsStatus','activationRows','activationPrev','activationNext','activationLabel','retryErrorsBtn'].map(id => [id,$(id)]));
   let activationPage = 1;
   let retryKeys = [];
   const PAGE_SIZE = 25;
@@ -352,7 +361,8 @@
       message(e.loadStatus,'Consulta concluída. Nenhuma alteração feita no Pandapé ou CRM.');
       e.badge.textContent='Conectado'; e.badge.classList.add('live');
       e.results.classList.add('hidden'); message(e.jobStatus,''); renderVacancies(); renderPeople();
-      prepareAgent(data);
+      if (e.autoAgent.checked) message(e.loadStatus,'Consulta concluída. O agente já está analisando os inscritos (seção 2).');
+      prepareAgent(data).then(ready => { if (ready && e.autoAgent.checked && agentLinks().length) runAgent(); });
     } catch(error) { message(e.loadStatus,error.message,true); }
     finally { busy=false; e.loadBtn.disabled=false; e.refreshBtn.disabled=false; renderPeople(); }
   }
@@ -401,6 +411,7 @@
   function agentRefresh() {
     const links=agentLinks();
     e.agentBtn.disabled=agentBusy||!agentSnapshot||!links.length;
+    e.agentBtn.textContent=e.agentResult.classList.contains('hidden')?'Rodar agente':'Rodar agente de novo';
     e.agentHint.textContent=links.length?`${links.length} vaga(s) ligada(s). Vagas sem ligação ficam fora da análise.`:'Ligue pelo menos uma vaga para rodar o agente.';
   }
   async function prepareAgent(data) {
@@ -409,7 +420,7 @@
     e.agentRows.replaceChildren(); agentRefresh();
     try {
       const status=await api('/api/agente/status');
-      if(!status.pronto) { message(e.agentStatus,status.motivo||'Agente indisponível.',true); return; }
+      if(!status.pronto) { message(e.agentStatus,status.motivo||'Agente indisponível.',true); return false; }
       message(e.agentStatus,'Carregando as vagas abertas do sistema da DNA…');
       const lists=await api('/api/agente/vagas?snapshot='+encodeURIComponent(agentSnapshot));
       for(const vacancy of lists.vagasPandape) {
@@ -424,9 +435,12 @@
         e.agentRows.append(row);
       }
       const linked=lists.vagasPandape.filter(v=>v.sugestao).length;
-      message(e.agentStatus,`${lists.vagasDna.length} vaga(s) aberta(s) no sistema da DNA. Sugestão automática para ${linked} de ${lists.vagasPandape.length} vaga(s) do Pandapé: confira antes de rodar.`);
-    } catch(error) { message(e.agentStatus,error.message,true); }
-    agentRefresh();
+      e.agentLinksLabel.textContent=`Ver ou ajustar as ligações das vagas (${linked} de ${lists.vagasPandape.length} ligadas)`;
+      if(!linked) { e.agentLinks.open=true; message(e.agentStatus,'Nenhuma vaga do Pandapé foi ligada sozinha a uma vaga aberta do sistema da DNA. Escolha as ligações abaixo e clique em "Rodar agente de novo".',true); }
+      else if(!e.autoAgent.checked) message(e.agentStatus,`${linked} de ${lists.vagasPandape.length} vaga(s) ligada(s) automaticamente. Clique em "Rodar agente de novo" para analisar.`);
+      agentRefresh();
+      return true;
+    } catch(error) { message(e.agentStatus,error.message,true); agentRefresh(); return false; }
   }
   async function runAgent() {
     const ligacoes=agentLinks();
@@ -455,10 +469,13 @@
       e.agentDownload.href='/api/agente/'+encodeURIComponent(started.jobId)+'/planilha';
       e.agentResult.classList.remove('hidden');
       message(e.agentStatus,'Análise concluída. Baixe a planilha abaixo.');
+      if (/agente já está analisando/.test(e.loadStatus.textContent)) message(e.loadStatus,'Consulta concluída. A análise do agente está pronta (seção 2).');
     } catch(error) { message(e.agentStatus,error.message,true); }
     finally { agentBusy=false; e.agentProgress.classList.add('hidden'); agentRefresh(); }
   }
   e.agentBtn.addEventListener('click',runAgent);
+  try { if (localStorage.getItem('painel-agente-auto') === '0') e.autoAgent.checked = false; } catch { /* sem armazenamento */ }
+  e.autoAgent.addEventListener('change',()=>{ try { localStorage.setItem('painel-agente-auto', e.autoAgent.checked ? '1' : '0'); } catch { /* sem armazenamento */ } });
   e.loadBtn.addEventListener('click',load); e.refreshBtn.addEventListener('click',load);
   e.typeFilter.addEventListener('change',()=>{ selected.clear(); peoplePage=1; renderPeople(); });
   e.quantity.addEventListener('input',updateSelection);

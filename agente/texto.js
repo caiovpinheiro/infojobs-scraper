@@ -82,8 +82,21 @@ function horarioTexto(horario) {
 }
 
 const VAZIAS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'a', 'o', 'as', 'os', 'para', 'com', 'na', 'no', 'vaga', 'clt', 'loja']);
+// Abreviações e variações comuns nos títulos do Pandapé, para a ligação automática achar a vaga certa.
+const SINONIMOS = {
+  rh: ['recursos', 'humanos'], adm: ['administrativo'], administrativa: ['administrativo'], aux: ['auxiliar'],
+  op: ['operador'], estagiario: ['estagio'], estagiaria: ['estagio'], estag: ['estagio'], ti: ['tecnologia', 'informacao'],
+  atend: ['atendente'], vend: ['vendedor'], repos: ['repositor']
+};
 function palavras(texto) {
-  return new Set(normalizar(texto).split(' ').filter(p => p.length > 1 && !VAZIAS.has(p)));
+  const lista = [];
+  for (const p of normalizar(texto).split(' ')) {
+    if (Object.hasOwn(SINONIMOS, p)) { lista.push(...SINONIMOS[p]); continue; }
+    if (p.length < 2 || VAZIAS.has(p)) continue;
+    // Feminino de função (operadora, vendedora, repositora) conta como a mesma função.
+    lista.push(p.length > 5 && p.endsWith('ora') ? p.slice(0, -1) : p);
+  }
+  return new Set(lista);
 }
 function jaccard(a, b) {
   if (!a.size || !b.size) return 0;
