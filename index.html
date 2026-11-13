@@ -20,13 +20,16 @@
     .badge.live { background:#e0f5e8; color:#186249; }
     .card { background:#fff; border:1px solid #e1e8ef; border-radius:16px; box-shadow:0 8px 25px rgba(14,44,66,.04); padding:21px; margin:0 0 16px; }
     .row { display:flex; align-items:center; justify-content:space-between; gap:14px; } .row.wrap { flex-wrap:wrap; }
-    .form-grid { display:grid; grid-template-columns:1fr 1fr 160px 130px auto; align-items:end; gap:12px; margin-top:18px; }
+    .form-grid { display:grid; grid-template-columns:minmax(160px,220px) minmax(160px,200px) auto; justify-content:start; align-items:end; gap:12px; margin-top:18px; }
+    .grade-agente td select { min-width:260px; }
+    .nota { font-weight:800; } .ok { color:#186249; } .alerta { color:#97600e; }
     .controls { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin:20px 0 14px; }
     .controls label { flex:1 1 160px; } .controls .btn { flex:0 0 auto; }
     label { display:grid; gap:6px; font-size:12px; font-weight:750; color:#4b6074; }
     input,select { width:100%; min-height:42px; border:1px solid #cbd8e4; background:#fff; color:#1e3042; border-radius:9px; padding:8px 10px; }
     input[type="checkbox"] { width:16px; height:16px; min-height:0; accent-color:#1c6da6; }
     input:focus,select:focus,button:focus-visible { outline:3px solid #8acbec; outline-offset:2px; }
+    a.btn { display:inline-flex; align-items:center; text-decoration:none; }
     .btn { border:0; border-radius:9px; background:#153f68; color:#fff; padding:10px 17px; min-height:42px; font-weight:750; white-space:nowrap; }
     .btn:hover:enabled { background:#0c3155; } .btn.alt { color:#165780; background:#e9f3f9; }
     .btn.alt:hover:enabled { background:#d8eaf5; } .btn.danger { background:#c25331; }
@@ -62,14 +65,14 @@
 <body>
 <main class="shell">
   <a class="back" href="https://dnaworkia-candidaturas.vkfaze.easypanel.host/">← Voltar</a>
-  <header><div><div class="eyebrow">DNA Work · Operação</div><h1>Pandapé → Bwipo CRM</h1><p class="muted">Veja os inscritos e suas vagas. Você decide quem entra no CRM.</p></div><span id="badge" class="badge">Aguardando acesso</span></header>
+  <header><div><div class="eyebrow">DNA Work · Operação</div><h1>Pandapé → Bwipo CRM</h1><p class="muted">Busque as vagas e os inscritos, escolha quem entra no CRM e use o agente para ranquear os candidatos de cada vaga.</p></div><span id="badge" class="badge">Pronto para buscar</span></header>
   <nav class="tabs" aria-label="Seções"><button type="button" id="tabConsulta" class="tab on">Consulta</button><button type="button" id="tabAtivacoes" class="tab">Ativações</button></nav>
   <div id="paneConsulta">
 
   <section class="card" aria-labelledby="accessTitle">
-    <h2 id="accessTitle">1. Acessar e consultar</h2>
-    <p class="muted">Use o usuário e a senha definidos no servidor. Eles permanecem somente nesta aba.</p>
-    <div class="form-grid"><label>Usuário<input id="username" autocomplete="username"></label><label>Senha<input id="password" type="password" autocomplete="current-password"></label><label>Tipo de contrato<select id="searchType"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Limite de vagas<input id="vacancyLimit" type="number" min="1" max="2000" step="1" value="20" inputmode="numeric"></label><button id="loadBtn" class="btn">Buscar inscritos</button></div>
+    <h2 id="accessTitle">1. Buscar vagas</h2>
+    <p class="muted">Escolha o tipo e quantas vagas do Pandapé ler. A busca traz as vagas e os inscritos nelas.</p>
+    <div class="form-grid"><label>Tipo de vaga<select id="searchType"><option value="">Todos</option><option value="CLT">CLT</option><option value="ESTAGIO">Estágio</option></select></label><label>Quantidade de vagas<input id="vacancyLimit" type="number" min="1" max="2000" step="1" value="20" inputmode="numeric"></label><button id="loadBtn" class="btn">Buscar vagas</button></div>
     <div id="loadStatus" class="status" role="status" aria-live="polite"></div>
     <div class="note">A consulta é somente leitura: não move candidatos e não envia WhatsApp. O total mostra todos os inscritos das vagas consultadas; a tabela pode ter um limite de linhas configurado no servidor.</div>
   </section>
@@ -93,6 +96,18 @@
     <div id="results" class="table-wrap hidden"><table><thead><tr><th>Pessoa</th><th>Resultado</th><th>Contato</th><th>Negócio</th></tr></thead><tbody id="resultRows"></tbody></table></div>
     <div class="row wrap" style="margin-top:12px"><button id="retryErrorsBtn" class="btn alt hidden" type="button">Tentar de novo quem deu erro</button></div>
   </section>
+
+  <section id="agentSection" class="card hidden" aria-labelledby="agentTitle">
+    <div class="row wrap"><div><h2 id="agentTitle">4. Analisar com o agente</h2><p class="muted">Ligue cada vaga do Pandapé à vaga do sistema da DNA. O agente lê o currículo dos inscritos, descarta quem mora a mais de 8 km ou não tem os requisitos, dá nota de 0 a 10 e monta a planilha. Só leitura: não mexe no Pandapé, no CRM nem no sistema da DNA.</p></div></div>
+    <div id="agentStatus" class="status" role="status" aria-live="polite"></div>
+    <div class="table-wrap grade-agente"><table><thead><tr><th>Vaga no Pandapé</th><th>Tipo</th><th>Inscritos</th><th>Vaga no sistema da DNA</th></tr></thead><tbody id="agentRows"></tbody></table></div>
+    <div class="row wrap" style="margin-top:16px"><p id="agentHint" class="muted"></p><button id="agentBtn" class="btn" type="button" disabled>Rodar agente</button></div>
+    <div id="agentProgress" class="progress hidden"><span id="agentBar"></span></div>
+    <div id="agentResult" class="hidden">
+      <div class="table-wrap"><table><thead><tr><th>Vaga</th><th>Tipo</th><th>Analisados</th><th>Sem distância</th><th>Descartados</th><th>Aderentes</th><th>Meta 50</th><th>Observações</th></tr></thead><tbody id="agentSummary"></tbody></table></div>
+      <div class="row wrap" style="margin-top:14px"><p class="muted">A planilha tem a aba Resumo e uma aba por vaga, com a nota e o link de cada perfil.</p><a id="agentDownload" class="btn" href="#" download>Baixar planilha (.xlsx)</a></div>
+    </div>
+  </section>
   </div>
   <section id="paneAtivacoes" class="card hidden" aria-labelledby="activationsTitle">
     <div class="row wrap"><div><h2 id="activationsTitle">Pessoas ativadas</h2><p class="muted">Quem entrou no CRM nesta operação, da mais recente para a mais antiga.</p></div><button id="activationsRefresh" class="minor" type="button">Atualizar</button></div>
@@ -108,7 +123,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const e = Object.fromEntries(['username','password','searchType','vacancyLimit','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selectPageBtn','selectAllBtn','pageCheck','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn','pagePrev','pageNext','pageLabel','tabConsulta','tabAtivacoes','paneConsulta','paneAtivacoes','activationsRefresh','activationsStatus','activationRows','activationPrev','activationNext','activationLabel','retryErrorsBtn'].map(id => [id,$(id)]));
+  const e = Object.fromEntries(['agentSection','agentStatus','agentRows','agentHint','agentBtn','agentProgress','agentBar','agentResult','agentSummary','agentDownload','searchType','vacancyLimit','loadBtn','loadStatus','badge','previewSection','peopleSection','freshness','metrics','warnings','vacancyRows','candidateRows','typeFilter','quantity','selectFirstBtn','selectPageBtn','selectAllBtn','pageCheck','selection','tableCount','clearBtn','refreshBtn','reviewBtn','jobStatus','progress','progressBar','results','resultRows','confirmDialog','confirmText','cancelBtn','confirmBtn','pagePrev','pageNext','pageLabel','tabConsulta','tabAtivacoes','paneConsulta','paneAtivacoes','activationsRefresh','activationsStatus','activationRows','activationPrev','activationNext','activationLabel','retryErrorsBtn'].map(id => [id,$(id)]));
   let activationPage = 1;
   let retryKeys = [];
   const PAGE_SIZE = 25;
@@ -120,13 +135,6 @@
   let requestId = null;
   let lastSelection = '';
   function message(node, value, error=false) { node.textContent=value; node.classList.toggle('error',error); }
-  function auth() {
-    const u = e.username.value, p = e.password.value;
-    if (!u || !p) throw new Error('Informe usuário e senha.');
-    const bytes = new TextEncoder().encode(u+':'+p);
-    let binary=''; for (const byte of bytes) binary+=String.fromCharCode(byte);
-    return 'Basic '+btoa(binary);
-  }
   async function api(url, options={}) {
     const retry = options.retry || 0;
     const request = { ...options };
@@ -135,7 +143,7 @@
     const canRetry = method === 'GET' || (method === 'POST' && url === '/api/preview');
     let response;
     try {
-      response=await fetch(url,{ ...request, headers:{ Authorization:auth(), ...(request.body?{'Content-Type':'application/json'}:{}) }, credentials:'omit', cache:'no-store' });
+      response=await fetch(url,{ ...request, headers:{ ...(request.body?{'Content-Type':'application/json'}:{}) }, credentials:'omit', cache:'no-store' });
     } catch (error) {
       if (canRetry && retry < 4) {
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -259,6 +267,7 @@
       message(e.loadStatus,'Consulta concluída. Nenhuma alteração feita no Pandapé ou CRM.');
       e.badge.textContent='Conectado'; e.badge.classList.add('live');
       e.results.classList.add('hidden'); message(e.jobStatus,''); renderVacancies(); renderPeople();
+      prepareAgent(data);
     } catch(error) { message(e.loadStatus,error.message,true); }
     finally { busy=false; e.loadBtn.disabled=false; e.refreshBtn.disabled=false; renderPeople(); }
   }
@@ -299,6 +308,72 @@
       poll(response.jobId);
     } catch(error) { message(e.jobStatus,error.message+' Confira o servidor antes de repetir.',true); busy=false; e.loadBtn.disabled=false; e.refreshBtn.disabled=false; e.confirmBtn.disabled=false; renderPeople(); }
   }
+  let agentSnapshot = null;
+  let agentBusy = false;
+  function agentLinks() {
+    return [...e.agentRows.querySelectorAll('select')].filter(select=>select.value).map(select=>({ idVacancy:select.dataset.vacancy, vagaDnaId:select.value }));
+  }
+  function agentRefresh() {
+    const links=agentLinks();
+    e.agentBtn.disabled=agentBusy||!agentSnapshot||!links.length;
+    e.agentHint.textContent=links.length?`${links.length} vaga(s) ligada(s). Vagas sem ligação ficam fora da análise.`:'Ligue pelo menos uma vaga para rodar o agente.';
+  }
+  async function prepareAgent(data) {
+    agentSnapshot=data.snapshotId;
+    e.agentSection.classList.remove('hidden'); e.agentResult.classList.add('hidden'); e.agentProgress.classList.add('hidden');
+    e.agentRows.replaceChildren(); agentRefresh();
+    try {
+      const status=await api('/api/agente/status');
+      if(!status.pronto) { message(e.agentStatus,status.motivo||'Agente indisponível.',true); return; }
+      message(e.agentStatus,'Carregando as vagas abertas do sistema da DNA…');
+      const lists=await api('/api/agente/vagas?snapshot='+encodeURIComponent(agentSnapshot));
+      for(const vacancy of lists.vagasPandape) {
+        const row=document.createElement('tr');
+        const title=document.createElement('td'); const strong=document.createElement('strong'); strong.textContent=vacancy.title||'Vaga'; const sub=document.createElement('div'); sub.className='subline'; sub.textContent='ID '+vacancy.id; title.append(strong,sub); row.append(title);
+        const typeCell=document.createElement('td'); const pill=document.createElement('span'); pill.className='pill'+(vacancy.type==='ESTAGIO'?' stage':!vacancy.type?' unknown':''); pill.textContent=vacancy.type==='ESTAGIO'?'Estágio':vacancy.type||'Sem tipo'; typeCell.append(pill); row.append(typeCell);
+        cell(row,String(vacancy.total));
+        const pick=document.createElement('td'); const select=document.createElement('select'); select.className='compact-select'; select.dataset.vacancy=vacancy.id; select.setAttribute('aria-label','Vaga do sistema da DNA para '+(vacancy.title||vacancy.id));
+        const none=document.createElement('option'); none.value=''; none.textContent='— não ligar —'; select.append(none);
+        for(const vaga of lists.vagasDna.filter(v=>!vacancy.type||v.tipo===vacancy.type)) { const option=document.createElement('option'); option.value=vaga.id; option.textContent=vaga.rotulo; select.append(option); }
+        select.value=vacancy.sugestao||''; select.addEventListener('change',agentRefresh); pick.append(select); row.append(pick);
+        e.agentRows.append(row);
+      }
+      const linked=lists.vagasPandape.filter(v=>v.sugestao).length;
+      message(e.agentStatus,`${lists.vagasDna.length} vaga(s) aberta(s) no sistema da DNA. Sugestão automática para ${linked} de ${lists.vagasPandape.length} vaga(s) do Pandapé: confira antes de rodar.`);
+    } catch(error) { message(e.agentStatus,error.message,true); }
+    agentRefresh();
+  }
+  async function runAgent() {
+    const ligacoes=agentLinks();
+    if(agentBusy||!agentSnapshot||!ligacoes.length) return;
+    agentBusy=true; agentRefresh(); e.agentResult.classList.add('hidden'); e.agentProgress.classList.remove('hidden'); e.agentBar.style.width='0%';
+    try {
+      const started=await api('/api/agente',{method:'POST',body:JSON.stringify({snapshotId:agentSnapshot,ligacoes})});
+      let job;
+      do {
+        await new Promise(resolve=>setTimeout(resolve,2000));
+        job=await api('/api/agente/'+encodeURIComponent(started.jobId));
+        const pct=job.total?Math.round(job.feitos/job.total*100):0;
+        e.agentBar.style.width=pct+'%';
+        if(job.status==='running') message(e.agentStatus,`Analisando: ${job.feitos} de ${job.total} perfis${job.fase&&job.fase!=='iniciando'?' · '+job.fase:''}…`);
+      } while(job.status==='running');
+      if(job.status==='failed') throw new Error(job.error||'A análise falhou.');
+      e.agentSummary.replaceChildren();
+      for(const item of job.resumo||[]) {
+        const row=document.createElement('tr');
+        const name=document.createElement('td'); const strong=document.createElement('strong'); strong.textContent=item.vaga; name.append(strong); row.append(name);
+        cell(row,item.tipo); cell(row,String(item.analisados)); cell(row,String(item.semDistancia)); cell(row,String(item.descartados));
+        const ok=cell(row,String(item.aderentes)); ok.className='nota';
+        const meta=cell(row,item.meta?'sim':'não'); meta.className=item.meta?'ok':'alerta';
+        cell(row,item.observacoes||'—'); e.agentSummary.append(row);
+      }
+      e.agentDownload.href='/api/agente/'+encodeURIComponent(started.jobId)+'/planilha';
+      e.agentResult.classList.remove('hidden');
+      message(e.agentStatus,'Análise concluída. Baixe a planilha abaixo.');
+    } catch(error) { message(e.agentStatus,error.message,true); }
+    finally { agentBusy=false; e.agentProgress.classList.add('hidden'); agentRefresh(); }
+  }
+  e.agentBtn.addEventListener('click',runAgent);
   e.loadBtn.addEventListener('click',load); e.refreshBtn.addEventListener('click',load);
   e.typeFilter.addEventListener('change',()=>{ selected.clear(); peoplePage=1; renderPeople(); });
   e.quantity.addEventListener('input',updateSelection);

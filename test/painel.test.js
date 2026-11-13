@@ -515,3 +515,12 @@ test('a página e o servidor não carregam segredo nem movem candidato', () => {
   assert.equal(source.includes('graph.facebook.com'), false);
   assert.equal(html.includes('PANDAPE_PASSWORD'), false);
 });
+
+test('a tela não pede usuário e senha e tem a seção do agente', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.equal(html.includes('id="username"'), false);
+  assert.equal(html.includes('id="password"'), false);
+  assert.equal(html.includes("'Basic '"), false);
+  assert.equal(html.includes('Authorization'), false);
+  for (const texto of ['Buscar vagas', 'Quantidade de vagas', 'Analisar com o agente', 'Rodar agente', 'Baixar planilha']) assert.match(html, new RegExp(texto));
+});
